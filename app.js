@@ -10,13 +10,34 @@ const HINT_PENALTY = 0.2;        // each hint knocks 20% off the challenge's mar
 const MIN_MULTIPLIER = 0.4;      // ...but solving always keeps at least 40%
 const SOLUTION_AFTER_FAILS = 2;  // solution unlocks after this many failed submits (or all hints)
 const TIME_LIMIT_MS = 8000;
-const STORE_KEY = "pymarker.v1";
+const PROFILES_KEY = "pymarker.profiles";
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+const profiles = (() => {
+  let p = null;
+  try { p = JSON.parse(store.get(PROFILES_KEY)); } catch {}
+  if (!p || !Array.isArray(p.list) || !p.list.length) p = { active: "main", list: [{ id: "main", name: "" }] };
+  if (!p.list.some((l) => l.id === p.active)) p.active = p.list[0].id;
+  return p;
+})();
+const saveProfiles = () => store.set(PROFILES_KEY, JSON.stringify(profiles));
+const keyFor = (id) => (id === "main" ? "pymarker.v1" : `pymarker.v1.${id}`);
+const learner = () => profiles.list.find((l) => l.id === profiles.active);
+const STORE_KEY = keyFor(profiles.active);
+
+// Shortcut labels: ⌘/⌥ on Apple keyboards, Ctrl/Alt everywhere else.
+const IS_MAC = /mac|iphone|ipad|ipod/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
+const MOD = IS_MAC ? "⌘" : "Ctrl";
+const ALT = IS_MAC ? "⌥" : "Alt";
 const GRADES = [[90, "A*"], [80, "A"], [70, "B"], [60, "C"], [50, "D"], [40, "E"], [0, "U"]];
 
 const CH = globalThis.CHALLENGES;
 const PLAYGROUND = {
   id: "playground", title: "Playground", level: null, type: "playground",
-  starter: `# Playground — try out anything here.\n# Press ▶ Run (⌘↵). Put input() lines in the "Program input" tab.\n\nname = "PyMarker"\nfor i in range(3):\n    print(f"{i}: hello from {name}")\n`,
+  starter: `# Playground — try out anything here.\n# Press ▶ Run (${MOD}+Enter). Put input() lines in the "Program input" tab.\n\nname = "PyMarker"\nfor i in range(3):\n    print(f"{i}: hello from {name}")\n`,
 };
 const ALL = [PLAYGROUND, ...CH];
 const byId = Object.fromEntries(ALL.map((c) => [c.id, c]));
@@ -25,9 +46,9 @@ const MAX_POINTS = CH.reduce((s, c) => s + LEVELS[c.level].points, 0);
 // ═════════════════════════ state ═════════════════════════
 const state = Object.assign(
   { progress: {}, current: null, days: [], fontSize: 14, filter: "all", collapsed: {} },
-  (() => { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; } })()
+  (() => { try { return JSON.parse(store.get(STORE_KEY)) || {}; } catch { return {}; } })()
 );
-const save = () => localStorage.setItem(STORE_KEY, JSON.stringify(state));
+const save = () => store.set(STORE_KEY, JSON.stringify(state));
 const prog = (id) => (state.progress[id] ||= { solved: false, points: 0, hints: 0, fails: 0, submits: 0, revealed: false, code: null });
 const current = () => byId[state.current] || CH[0];
 const isPlay = (ch) => ch.type === "playground";
@@ -250,6 +271,7 @@ const vscode = {
     return `${LEVELS[ch.level].label}/${String(levelIndex(ch)).padStart(2, "0")}_${slug(ch.title)}.py`;
   },
   async init() {
+    if (profiles.active !== "main") { this.available = false; return; } // lesson files on this Mac belong to the first learner
     try { this.available = !!(await this.api("/api/health")).vscode; } catch { this.available = false; }
     $("#btn-vscode").hidden = !this.available;
   },
@@ -438,10 +460,10 @@ function renderLeft() {
 
 function shortcutsHtml() {
   return `<div class="shortcuts"><div class="section-label">Shortcuts</div><div class="tips">
-    <div class="tip-row"><kbd>⌘</kbd><kbd>↵</kbd> Run your code</div>
-    <div class="tip-row"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>↵</kbd> Submit for marking</div>
-    <div class="tip-row"><kbd>⌘</kbd><kbd>/</kbd> Comment / uncomment lines</div>
-    <div class="tip-row"><kbd>⌥</kbd><kbd>←</kbd><kbd>→</kbd> Previous / next challenge</div></div></div>`;
+    <div class="tip-row"><kbd>${MOD}</kbd><kbd>↵</kbd> Run your code</div>
+    <div class="tip-row"><kbd>${MOD}</kbd><kbd>⇧</kbd><kbd>↵</kbd> Submit for marking</div>
+    <div class="tip-row"><kbd>${MOD}</kbd><kbd>/</kbd> Comment / uncomment lines</div>
+    <div class="tip-row"><kbd>${ALT}</kbd><kbd>←</kbd><kbd>→</kbd> Previous / next challenge</div></div></div>`;
 }
 
 function examplesHtml(ch) {
@@ -592,7 +614,7 @@ function openDashboard() {
       <div class="ring"><svg viewBox="0 0 120 120"><defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b82ff"/><stop offset="1" stop-color="#9b6bff"/></linearGradient></defs>
         <circle class="track" cx="60" cy="60" r="52"/><circle class="val" cx="60" cy="60" r="52" stroke-dasharray="${C}" stroke-dashoffset="${C}" id="ring-val"/></svg>
         <div class="center"><div><b>${t.grade}</b><span>${t.pct}%</span></div></div></div>
-      <div><h2 id="modal-title">Your progress report</h2><p>${msg}</p></div>
+      <div><h2 id="modal-title">${learner().name ? `${esc(learner().name)}'s progress report` : "Your progress report"}</h2><p>${msg}</p></div>
     </div>
     <div class="dash-stats">
       <div class="dash-stat"><b>${t.solved}/${CH.length}</b><span>challenges solved</span></div>
@@ -817,13 +839,13 @@ $("#modal").addEventListener("click", (e) => {
   if (e.target === $("#modal") || e.target.closest("[data-close]")) return closeModal();
   if (e.target.closest("#btn-export")) {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `pymarker-progress-${today()}.json` });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `pymarker-progress-${learner().name ? slug(learner().name) + "-" : ""}${today()}.json` });
     a.click(); URL.revokeObjectURL(a.href);
   } else if (e.target.closest("#btn-import")) {
     $("#import-file").click();
   } else if (e.target.closest("#btn-reset-all")) {
-    if (confirm("Delete ALL progress, marks and saved code? This can't be undone.")) {
-      localStorage.removeItem(STORE_KEY); location.reload();
+    if (confirm(`Delete ALL of ${learner().name ? learner().name + "'s" : "this learner's"} progress, marks and saved code? This can't be undone.`)) {
+      store.del(STORE_KEY); location.reload();
     }
   }
 });
@@ -832,7 +854,7 @@ $("#import-file").addEventListener("change", async (e) => {
   try {
     const data = JSON.parse(await file.text());
     if (!data || typeof data.progress !== "object") throw new Error("not a PyMarker progress file");
-    localStorage.setItem(STORE_KEY, JSON.stringify(data));
+    store.set(STORE_KEY, JSON.stringify(data));
     location.reload();
   } catch (err) { toast(`Import failed: ${esc(err.message)}`); }
 });
@@ -843,6 +865,85 @@ document.addEventListener("keydown", (e) => {
   if (e.altKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) { e.preventDefault(); go(e.key === "ArrowRight" ? 1 : -1); }
 });
 
+// ═════════════════════════ learners ═════════════════════════
+// Several people can share one browser; each learner's progress lives under its own key.
+function learnerStats(id) {
+  let s = {};
+  try { s = id === profiles.active ? state : JSON.parse(store.get(keyFor(id))) || {}; } catch {}
+  const pr = s.progress || {};
+  const points = CH.reduce((n, c) => n + (pr[c.id]?.points || 0), 0);
+  return { solved: CH.filter((c) => pr[c.id]?.solved).length, grade: gradeFor(Math.round((points / MAX_POINTS) * 100)) };
+}
+const initial = (name) => (name.trim()[0] || "?").toUpperCase();
+function renderLearnerButton() {
+  const l = learner();
+  $("#learner-initial").textContent = l.name ? initial(l.name) : "👤";
+  $("#learner-name").textContent = l.name || "Add your name";
+  $("#btn-learner").title = l.name ? `Learning as ${l.name}. Click to switch learner` : "Add your name, or add another learner";
+}
+function openLearners() {
+  const rows = profiles.list.map((l) => {
+    const st = learnerStats(l.id), on = l.id === profiles.active;
+    return `<div class="learner-row ${on ? "on" : ""}">
+      <span class="avatar">${l.name ? esc(initial(l.name)) : "👤"}</span>
+      <div class="who"><b>${l.name ? esc(l.name) : "Unnamed learner"}</b><span>${st.solved}/${CH.length} solved · grade ${st.grade}</span></div>
+      ${on ? `<span class="you">Current</span><button class="btn ghost" data-rename="${l.id}">Rename</button>`
+           : `<button class="btn" data-switch="${l.id}">Switch</button><button class="btn ghost icon" data-remove="${l.id}" title="Remove this learner">✕</button>`}
+    </div>`;
+  }).join("");
+  $("#modal-body").innerHTML = `
+    <h2 id="modal-title" style="margin:0 0 4px">Who's learning?</h2>
+    <p class="muted" style="margin:0 0 18px">Each learner has their own progress, marks and code. On a shared computer, add a learner for each person.
+      Progress is saved in this browser, so a different computer starts fresh (use Export / Import in the progress report to move it).</p>
+    <div class="learner-list">${rows}</div>
+    <form class="learner-add" id="learner-add">
+      <input id="learner-new" maxlength="30" placeholder="New learner's name" autocomplete="off" required />
+      <button class="btn primary" type="submit">Add learner</button>
+    </form>`;
+  $("#modal").hidden = false;
+  if (!learner().name && profiles.list.length === 1) setTimeout(() => $("[data-rename]")?.click(), 0);
+}
+function switchLearner(id) {
+  save(); profiles.active = id; saveProfiles(); location.reload();
+}
+$("#btn-learner").addEventListener("click", openLearners);
+$("#modal").addEventListener("click", (e) => {
+  const sw = e.target.closest("[data-switch]");
+  if (sw) return switchLearner(sw.dataset.switch);
+  const rn = e.target.closest("[data-rename]");
+  if (rn) {
+    const row = rn.closest(".learner-row"), l = learner();
+    row.querySelector(".who").innerHTML = `<form class="rename-form"><input maxlength="30" value="${esc(l.name)}" placeholder="Your name" aria-label="Your name" /></form>`;
+    rn.remove();
+    const input = row.querySelector("input"); input.focus(); input.select();
+    const done = () => { l.name = input.value.trim(); saveProfiles(); renderLearnerButton(); openLearners(); };
+    row.querySelector("form").addEventListener("submit", (ev) => { ev.preventDefault(); done(); });
+    input.addEventListener("blur", done, { once: true });
+    return;
+  }
+  const rm = e.target.closest("[data-remove]");
+  if (rm) {
+    const l = profiles.list.find((x) => x.id === rm.dataset.remove);
+    if (confirm(`Remove ${l.name || "this learner"} and delete all their progress on this computer? This can't be undone.`)) {
+      store.del(keyFor(l.id)); profiles.list = profiles.list.filter((x) => x.id !== l.id); saveProfiles(); openLearners();
+    }
+  }
+});
+$("#modal").addEventListener("submit", (e) => {
+  if (e.target.id !== "learner-add") return;
+  e.preventDefault();
+  const name = $("#learner-new").value.trim(); if (!name) return;
+  const id = "l" + Date.now().toString(36);
+  profiles.list.push({ id, name });
+  if (!learner().name && profiles.list.length === 2) { /* keep the unnamed first learner as-is */ }
+  switchLearner(id);
+});
+
+$("#btn-run kbd").textContent = `${MOD}↵`;
+$("#btn-submit kbd").textContent = `${MOD}⇧↵`;
+$("#btn-prev").title = `Previous (${ALT} ←)`;
+$("#btn-next").title = `Next (${ALT} →)`;
+renderLearnerButton();
 applyFont();
 selectChallenge(current().id);
 vscode.init();

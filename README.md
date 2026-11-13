@@ -16,6 +16,14 @@ Python challenges from beginner to advanced, marked automatically in the browser
   Edits sync both ways; the header is stripped before marking. Press Submit in the app to get marked.
 - Playground, search + filters, progress dashboard (export/import/reset), day streak, font size, ⌘/ comments.
 
+## Learners and devices
+
+- **Different computers or phones:** each browser keeps its own progress, so two people on two devices are automatically separate.
+- **Sharing one computer:** click the person button in the top bar (*Who's learning?*) and add a learner for each person.
+  Each learner gets their own progress, marks and code, and switching is one click.
+- Shortcut hints show ⌘/⌥ on Macs and Ctrl/Alt on Windows/Linux. The shortcuts themselves accept either.
+- The VS Code sync is for the first learner on the Mac running `serve.py`, so other learners never overwrite those lesson files.
+
 ## Use it on a phone
 
 Live at **https://isaac2681.github.io/pymarker/**. Open it on each phone, then use Share → *Add to Home Screen* (iPhone)
