@@ -45,6 +45,8 @@ Plain `python3 -m http.server 8765` also works, just without the VS Code button.
 
 ## Adding challenges
 
+After changing `app.js`, `challenges.js` or `style.css`, bump the `?v=` number on their links in `index.html`. GitHub Pages caches files for 10 minutes, and the version tag makes every visitor load matching files.
+
 Add an entry to `challenges.js` (`stdout`, `function` or `script` type — see the header comment), then check it:
 
 ```bash
