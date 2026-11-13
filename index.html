@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0d13" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="PyMarker" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <title>PyMarker — Python Challenges</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <button id="btn-menu" class="btn icon ghost menu-btn" aria-label="Show challenges" aria-controls="sidebar" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <div class="brand">
+      <div class="logo-mark" aria-hidden="true">Py</div>
+      <div>
+        <div class="brand-name">PyMarker</div>
+        <div class="brand-sub">Python challenges, marked instantly</div>
+      </div>
+    </div>
+
+    <div class="overall" title="Overall progress">
+      <div class="overall-bar"><div id="overall-fill"></div></div>
+      <span id="overall-label">0 of 0 solved</span>
+    </div>
+
+    <div class="chips">
+      <div class="chip" title="Days in a row you've solved something"><span class="chip-ico">🔥</span><b id="stat-streak">0</b><span>day streak</span></div>
+      <div class="chip" title="Marks earned"><b id="stat-points">0</b><span id="stat-max">/ 0 marks</span></div>
+      <button class="grade-pill" id="btn-dashboard" title="Open your progress report">
+        <span class="grade-letter" id="stat-grade">U</span>
+        <span class="grade-pct" id="stat-pct">0%</span>
+      </button>
+    </div>
+
+    <div id="py-status" class="py-status loading" title="Python runtime"><span class="dot"></span><span class="txt">Loading Python</span></div>
+  </header>
+
+  <div class="layout">
+    <aside id="sidebar" aria-label="Challenges">
+      <div class="side-top">
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="search" type="search" placeholder="Search challenges" autocomplete="off" />
+        </div>
+        <div class="seg" id="filters">
+          <button data-filter="all">All</button><button data-filter="todo">To do</button><button data-filter="done">Solved</button><button data-filter="if" title="Only if / elif / else practice">if/else</button>
+        </div>
+      </div>
+      <nav id="ch-list"></nav>
+    </aside>
+    <div id="drawer-backdrop" hidden></div>
+
+    <main class="workspace">
+      <section class="pane left">
+        <div class="pane-head">
+          <div class="title-block">
+            <div class="title-meta" id="ch-meta"></div>
+            <h1 id="ch-title"></h1>
+          </div>
+          <div class="nav-btns">
+            <button id="btn-prev" class="btn icon ghost" title="Previous (Alt ←)">‹</button>
+            <button id="btn-next" class="btn icon ghost" title="Next (Alt →)">›</button>
+          </div>
+        </div>
+        <div class="tabs" id="left-tabs">
+          <button data-tab="task">Task</button>
+          <button data-tab="tests">Examples</button>
+          <button data-tab="help">Help <span class="tab-dot" id="help-dot" hidden></span></button>
+        </div>
+        <div class="pane-body" id="left-body"></div>
+      </section>
+
+      <section class="pane right">
+        <div class="toolbar">
+          <button id="btn-run" class="btn"><span>▶ Run</span><kbd>⌘↵</kbd></button>
+          <button id="btn-submit" class="btn primary"><span>Submit</span><kbd>⌘⇧↵</kbd></button>
+          <span class="spacer"></span>
+          <span id="sync-status" class="sync" hidden></span>
+          <button id="btn-vscode" class="btn ghost" hidden title="Edit this challenge in Visual Studio Code — changes sync both ways">
+            <svg viewBox="0 0 24 24" class="vs-ico" aria-hidden="true"><path d="M17.5 2 8.6 10.2 4.1 6.8 2 7.9v8.2l2.1 1.1 4.5-3.4 8.9 8.2 4.5-2.2V4.2L17.5 2Zm0 5.3v9.4l-6.2-4.7 6.2-4.7ZM4.3 9.6 6.7 12l-2.4 2.4V9.6Z"/></svg>
+            <span id="vscode-label">Edit in VS Code</span>
+          </button>
+          <div class="btn-group">
+            <button id="font-dec" class="btn ghost icon" title="Smaller text">A−</button>
+            <button id="font-inc" class="btn ghost icon" title="Bigger text">A+</button>
+          </div>
+          <button id="btn-reset" class="btn ghost icon" title="Reset to starter code">↺</button>
+        </div>
+        <div class="keybar" id="keybar" aria-label="Coding keys">
+          <button data-key="indent" title="Indent">⇥</button><button data-key="dedent" title="Unindent">⇤</button>
+          <button data-ins=":">:</button><button data-pair="()">( )</button><button data-pair='""'>" "</button>
+          <button data-pair="[]">[ ]</button><button data-ins=" = ">=</button><button data-ins=" == ">==</button>
+          <button data-ins=" != ">!=</button><button data-ins=" < ">&lt;</button><button data-ins=" > ">&gt;</button>
+          <button data-ins=" <= ">&lt;=</button><button data-ins=" >= ">&gt;=</button><button data-pair="''">' '</button>
+          <button data-pair="{}">{ }</button><button data-ins="#">#</button><button data-ins="_">_</button>
+          <button data-key="undo" title="Undo">↶</button><button data-key="redo" title="Redo">↷</button>
+        </div>
+        <div class="editor-wrap"><textarea id="editor"></textarea></div>
+        <div class="console">
+          <div class="tabs small" id="console-tabs">
+            <button data-ctab="results">Results</button>
+            <button data-ctab="input">Program input</button>
+          </div>
+          <div id="console-results" class="console-body"></div>
+          <div id="console-input" class="console-body" hidden>
+            <textarea id="stdin" rows="5" spellcheck="false" placeholder="Ada&#10;42"></textarea>
+            <p class="muted small">One line per <code>input()</code> call. Used when you press ▶ Run.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <button class="modal-close btn icon ghost" data-close title="Close">✕</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+  <input type="file" id="import-file" accept="application/json" hidden />
+  <div id="toasts" aria-live="polite"></div>
+  <div id="confetti" aria-hidden="true"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+  <script src="challenges.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
