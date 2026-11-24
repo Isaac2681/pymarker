@@ -834,3 +834,20 @@ table.data .null { color: var(--muted); font-style: italic; }
 }
 .cs-layout > *, .lesson, .quiz-wrap { min-width: 0; }
 @media (max-width: 760px) { .cs-layout { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── cloud sync ── */
+.learner-btn { position: relative; }
+.sync-dot { position: absolute; left: 24px; top: 2px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--panel); background: var(--muted); cursor: pointer; }
+.sync-dot.ok { background: var(--pass); }
+.sync-dot.syncing { background: var(--accent); animation: pulse 1s infinite alternate; }
+.sync-dot.offline { background: var(--warn); }
+.sync-dot.error { background: var(--fail); }
+.sync-panel { margin: 4px 0 18px; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border); background: var(--panel-2); }
+.sync-panel p { margin: 6px 0; }
+.sp-head { font-weight: 700; font-size: 15px; }
+.sp-actions { display: flex; gap: 8px; margin-top: 8px; }
+.sp-status.ok { color: var(--pass); }
+.sp-status.error, .sp-bad { color: var(--fail); }
+.sp-status.offline { color: var(--warn); }
+.sync-panel .learner-add { margin-top: 10px; }
+.sync-panel a { color: var(--accent); }

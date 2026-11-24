@@ -118,6 +118,7 @@ const state = Object.assign(
 );
 let warnedFull = false;
 function save() {
+  globalThis.__pmSync?.pushSoon(); // set once the sync section has loaded
   if (store.set(STORE_KEY, JSON.stringify(state))) return;
   // Out of space: drop saved submission code (oldest first) so marks and progress can still be saved.
   for (const p of Object.values(state.progress)) if (p.subs) p.subs = p.subs.slice(-3).map((x, i, a) => (i < a.length - 1 ? { ...x, code: "" } : x));
@@ -131,22 +132,28 @@ const current = () => byId[state.current] || CH[0];
 let view = null; // "roadmap" | "problems" | "problem"
 // Progress can come from an imported file, so force every numeric field to be a number before it's ever rendered.
 const num = (v) => (Number.isFinite(+v) ? +v : 0);
-if (!state.progress || typeof state.progress !== "object") state.progress = {};
-for (const [id, p] of Object.entries(state.progress)) {
-  if (!p || typeof p !== "object") { delete state.progress[id]; continue; }
-  for (const k of ["points", "hints", "fails", "submits", "editedAt"]) if (k in p) p[k] = num(p[k]);
-  p.solved = !!p.solved; p.revealed = !!p.revealed;
-  if (p.code != null && typeof p.code !== "string") p.code = null;
-  p.subs = Array.isArray(p.subs) ? p.subs.filter((x) => x && typeof x === "object").map((x) => ({
-    t: num(x.t), code: typeof x.code === "string" ? x.code : "", kind: ["ok", "wrong", "error", "timeout"].includes(x.kind) ? x.kind : "wrong",
-    passed: num(x.passed), total: num(x.total) })) : undefined;
+function cleanState(st) {
+  if (!st.progress || typeof st.progress !== "object" || Array.isArray(st.progress)) st.progress = {};
+  for (const [id, p] of Object.entries(st.progress)) {
+    if (!p || typeof p !== "object" || id === "__proto__" || id === "constructor" || id === "prototype") { delete st.progress[id]; continue; }
+    for (const k of ["points", "hints", "fails", "submits", "editedAt"]) if (k in p) p[k] = num(p[k]);
+    p.solved = !!p.solved; p.revealed = !!p.revealed; p.solutionOpen = !!p.solutionOpen;
+    if (p.code != null && typeof p.code !== "string") p.code = null;
+    if (p.code && p.code.length > 20000) p.code = p.code.slice(0, 20000); // keeps the synced row a sensible size
+    p.subs = Array.isArray(p.subs) ? p.subs.filter((x) => x && typeof x === "object").map((x) => ({
+      t: num(x.t), code: typeof x.code === "string" ? x.code.slice(0, 8000) : "", kind: ["ok", "wrong", "error", "timeout"].includes(x.kind) ? x.kind : "wrong",
+      passed: num(x.passed), total: num(x.total) })) : undefined;
+  }
+  st.quizzes = st.quizzes && typeof st.quizzes === "object" ? st.quizzes : {};
+  for (const k of ["__proto__", "constructor", "prototype"]) { delete st.quizzes[k]; delete st.lessons?.[k]; }
+  for (const [k, v] of Object.entries(st.quizzes)) st.quizzes[k] = { best: num(v?.best), last: num(v?.last), total: num(v?.total), at: num(v?.at) };
+  st.lessons = st.lessons && typeof st.lessons === "object" ? st.lessons : {};
+  for (const k of Object.keys(st.lessons)) st.lessons[k] = !!st.lessons[k];
+  st.days = Array.isArray(st.days) ? st.days.filter((d) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) : [];
+  st.fontSize = Math.min(22, Math.max(11, num(st.fontSize) || 14));
+  return st;
 }
-state.quizzes = state.quizzes && typeof state.quizzes === "object" ? state.quizzes : {};
-for (const [k, v] of Object.entries(state.quizzes)) state.quizzes[k] = { best: num(v?.best), last: num(v?.last), total: num(v?.total), at: num(v?.at) };
-state.lessons = state.lessons && typeof state.lessons === "object" ? state.lessons : {};
-for (const k of Object.keys(state.lessons)) state.lessons[k] = !!state.lessons[k];
-state.days = Array.isArray(state.days) ? state.days.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)) : [];
-state.fontSize = Math.min(22, Math.max(11, num(state.fontSize) || 14));
+cleanState(state);
 const isPlay = (ch) => ch.type === "playground";
 const levelIndex = (ch) => CH.filter((c) => c.level === ch.level).indexOf(ch) + 1;
 
@@ -1556,6 +1563,193 @@ $("#page-body").addEventListener("keydown", (e) => {
   if (row && e.key === "Enter") openProblem(row.dataset.open);
 });
 
+
+// ═════════════════════════ cloud sync (Supabase) ═════════════════════════
+// Each learner can sign in with an email code. Their progress is stored as one JSON row per account
+// (table `progress`, protected by row-level security so people can only read and write their own row).
+// Every sync is read → merge → write, and the merge never loses work: solved stays solved, best scores win,
+// the newest code wins, and submission histories are combined.
+const SYNC_CFG = globalThis.PYMARKER_SYNC || {};
+const SYNC_KEYS = ["progress", "days", "quizzes", "lessons"]; // what travels; editor font, filters etc. stay per device
+
+function mergeProg(a, b) {
+  if (!a) return b; if (!b) return a;
+  const newer = num(a.editedAt) >= num(b.editedAt) ? a : b;
+  const seen = new Set(), subs = [];
+  for (const x of [...(a.subs || []), ...(b.subs || [])].sort((x, y) => x.t - y.t)) {
+    const k = `${x.t}|${x.kind}|${x.passed}`; if (!seen.has(k)) { seen.add(k); subs.push(x); }
+  }
+  return {
+    solved: a.solved || b.solved, points: Math.max(num(a.points), num(b.points)),
+    hints: Math.max(num(a.hints), num(b.hints)), fails: Math.max(num(a.fails), num(b.fails)), submits: Math.max(num(a.submits), num(b.submits)),
+    revealed: a.revealed || b.revealed, solutionOpen: !!newer.solutionOpen,
+    code: newer.code ?? a.code ?? b.code ?? null, editedAt: Math.max(num(a.editedAt), num(b.editedAt)),
+    subs: subs.length ? subs.slice(-20) : undefined,
+  };
+}
+function mergeState(local, remote) {
+  const out = { progress: {}, days: [], quizzes: {}, lessons: {} };
+  for (const id of new Set([...Object.keys(local.progress), ...Object.keys(remote.progress)]))
+    out.progress[id] = mergeProg(local.progress[id], remote.progress[id]);
+  out.days = [...new Set([...local.days, ...remote.days])].sort();
+  for (const id of new Set([...Object.keys(local.quizzes), ...Object.keys(remote.quizzes)])) {
+    const a = local.quizzes[id], b = remote.quizzes[id];
+    if (!a || !b) { out.quizzes[id] = a || b; continue; }
+    const newer = a.at >= b.at ? a : b;
+    out.quizzes[id] = { best: Math.max(a.best, b.best), last: newer.last, total: Math.max(a.total, b.total), at: newer.at };
+  }
+  for (const id of new Set([...Object.keys(local.lessons), ...Object.keys(remote.lessons)])) out.lessons[id] = !!(local.lessons[id] || remote.lessons[id]);
+  return out;
+}
+const syncPayload = () => Object.fromEntries(SYNC_KEYS.map((k) => [k, state[k]]));
+
+const sync = {
+  configured: !!(SYNC_CFG.url && SYNC_CFG.anonKey),
+  client: null, user: null, status: "off", lastSync: 0, error: "", timer: null, running: null, pendingEmail: null,
+  async init() {
+    if (!this.configured) return this.render();
+    try {
+      await new Promise((res, rej) => {
+        const s = Object.assign(document.createElement("script"), {
+          src: "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js",
+          // pinned: the browser refuses the file if the CDN ever serves anything different
+          integrity: "sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o", crossOrigin: "anonymous",
+          onload: res, onerror: rej });
+        document.head.append(s);
+      });
+      this.client = globalThis.supabase.createClient(SYNC_CFG.url, SYNC_CFG.anonKey, {
+        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: `pymarker.auth.${profiles.active}` },
+      });
+    } catch { this.status = "error"; this.error = "Couldn't load the sync service."; return this.render(); }
+    const { data } = await this.client.auth.getSession();
+    this.user = data.session?.user || null;
+    this.client.auth.onAuthStateChange((_ev, session) => {
+      const was = this.user?.id;
+      this.user = session?.user || null;
+      if (this.user && this.user.id !== was) this.syncNow();
+      if (!this.user) this.status = "off";
+      this.render();
+    });
+    window.addEventListener("online", () => this.syncNow());
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") this.syncNow(); });
+    if (this.user) this.syncNow(); else this.render();
+  },
+  pushSoon(ms = 2500) {
+    if (!this.user || applyingSync) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.syncNow(), ms);
+  },
+  syncNow() {
+    if (!this.user || !this.client) return;
+    if (this.running) { this.again = true; return this.running; }
+    this.running = this._sync().finally(() => { this.running = null; if (this.again) { this.again = false; this.syncNow(); } });
+    return this.running;
+  },
+  async _sync() {
+    clearTimeout(this.timer);
+    if (!navigator.onLine) { this.status = "offline"; return this.render(); }
+    this.status = "syncing"; this.render();
+    try {
+      const uid = this.user.id;
+      const { data, error } = await this.client.from("progress").select("data").eq("user_id", uid).maybeSingle();
+      if (error) throw error;
+      if (data?.data && typeof data.data === "object") {
+        const remote = cleanState(structuredClone(data.data));
+        applyMerged(mergeState(cleanState(syncPayload()), remote));
+        if (!learner().name && typeof data.data.name === "string" && data.data.name.trim()) {
+          learner().name = data.data.name.trim().slice(0, 30); saveProfiles(); renderLearnerButton();
+        }
+      }
+      const { error: upErr } = await this.client.from("progress").upsert({ user_id: uid, data: { ...syncPayload(), name: learner().name || "" }, updated_at: new Date().toISOString() });
+      if (upErr) throw upErr;
+      this.status = "ok"; this.lastSync = Date.now(); this.error = "";
+    } catch (e) {
+      this.status = navigator.onLine ? "error" : "offline";
+      this.error = e?.message || String(e);
+    }
+    this.render();
+  },
+  async sendCode(email) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "That doesn't look like an email address.";
+    const { error } = await this.client.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname } });
+    return error ? friendlyAuthError(error) : null;
+  },
+  async verify(email, code) {
+    if (!/^\d{6,10}$/.test(code)) return "Enter the code from the email (numbers only).";
+    const { error } = await this.client.auth.verifyOtp({ email, token: code, type: "email" });
+    return error ? friendlyAuthError(error) : null;
+  },
+  async signOut() {
+    if (!confirm("Sign out of sync on this device? Your progress stays here, but it won't sync until you sign in again.")) return;
+    await this.client.auth.signOut({ scope: "local" }); // this device only
+    this.user = null; this.status = "off"; refreshSyncPanel(); this.render();
+  },
+  render() {
+    const dot = $("#sync-dot");
+    if (dot) {
+      dot.className = `sync-dot ${this.user ? this.status : "off"}`;
+      dot.hidden = !this.configured;
+      dot.title = !this.user ? "Not syncing. Click to sign in and sync your progress" : { ok: "Progress synced", syncing: "Syncing…", offline: "Offline, will sync when you're back online", error: "Sync problem: click for details" }[this.status] || "";
+    }
+    refreshSyncPanel(true);
+  },
+};
+let applyingSync = false;
+function applyMerged(merged) {
+  const ch = current(), before = prog(ch.id).code, editorWas = editor.getValue();
+  applyingSync = true;
+  for (const k of SYNC_KEYS) state[k] = merged[k];
+  save();
+  applyingSync = false;
+  // If the open problem's code changed on another device and you haven't typed since, show the newer code.
+  const after = prog(ch.id).code;
+  if (after != null && after !== before && editorWas === (before ?? ch.starter)) {
+    applyingRemote = true; editor.setValue(after); applyingRemote = false;
+  }
+  renderHeader(); renderSidebar(); renderTitle();
+  if (view === "problem") renderLeft();
+  else if (view === "roadmap") renderRoadmap();
+  else if (view === "problems") renderProblems();
+  renderMenu();
+}
+function friendlyAuthError(e) {
+  const m = e?.message || String(e);
+  if (/rate limit|too many/i.test(m)) return "Too many emails sent. Wait a minute, then try again.";
+  if (/expired|invalid/i.test(m)) return "That code is wrong or has expired. Check the latest email, or send a new code.";
+  if (/network|fetch/i.test(m)) return "Couldn't reach the sync service. Check your internet connection.";
+  console.warn("Sync sign-in error:", m);
+  return "Something went wrong signing in. Please try again in a minute.";
+}
+const agoShort = (t) => { const s = Math.round((Date.now() - t) / 1000); return s < 10 ? "just now" : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)} min ago` : `${Math.floor(s / 3600)} hr ago`; };
+function syncPanelHtml() {
+  if (!sync.configured) return `<div class="sp-head">☁️ Sync across devices</div><p class="muted small">Not set up on this site yet.</p>`;
+  if (!sync.client) return `<div class="sp-head">☁️ Sync across devices</div><p class="muted small">${sync.status === "error" ? esc(sync.error) : "Loading…"}</p>`;
+  if (sync.user) {
+    const st = { ok: `✓ Synced ${agoShort(sync.lastSync)}`, syncing: "Syncing…", offline: "Offline, will sync when you're back online", error: `⚠️ ${esc(sync.error || "Sync failed")}`, off: "" }[sync.status] || "";
+    return `<div class="sp-head">☁️ Sync is on</div>
+      <p class="small">Signed in as <b>${esc(sync.user.email || "")}</b>. This learner's progress follows you to any device where you sign in with the same email.</p>
+      <p class="small sp-status ${sync.status}">${st}</p>
+      <div class="sp-actions"><button class="btn" data-sync-now>Sync now</button><button class="btn ghost" data-sync-out>Sign out</button></div>`;
+  }
+  if (sync.pendingEmail) return `<div class="sp-head">☁️ Check your email</div>
+    <p class="small">We sent a code to <b>${esc(sync.pendingEmail)}</b>. Type it here. It can take a minute to arrive, so check spam too.</p>
+    <form id="sync-code-form" class="learner-add"><input id="sync-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Code from the email" required /><button class="btn primary" type="submit">Sign in</button></form>
+    <p class="small"><a href="#" data-sync-back>Use a different email</a></p><p id="sync-msg" class="small"></p>`;
+  return `<div class="sp-head">☁️ Sync across devices</div>
+    <p class="muted small">Sign in with your email to keep <b>${learner().name ? esc(learner().name) + "'s" : "this learner's"}</b> progress on every phone and computer you use. There's no password: we email you a code.</p>
+    <form id="sync-email-form" class="learner-add"><input id="sync-email" type="email" autocomplete="email" placeholder="you@example.com" required /><button class="btn primary" type="submit">Email me a code</button></form>
+    <p id="sync-msg" class="small"></p>`;
+}
+function refreshSyncPanel(onlyIfStatic) {
+  const el = $("#sync-panel");
+  if (!el || $("#modal").hidden) return;
+  if (onlyIfStatic && el.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return; // don't wipe what you're typing
+  el.innerHTML = syncPanelHtml();
+}
+const syncMsg = (msg, bad) => { const el = $("#sync-msg"); if (el) { el.textContent = msg; el.className = `small ${bad ? "sp-bad" : ""}`; } };
+globalThis.__pmSync = sync;
+$("#sync-dot").addEventListener("click", (e) => { e.stopPropagation(); openLearners(); });
+
 // ═════════════════════════ learners ═════════════════════════
 // Several people can share one browser; each learner's progress lives under its own key.
 function learnerStats(id) {
@@ -1584,9 +1778,9 @@ function openLearners() {
   }).join("");
   $("#modal-body").innerHTML = `
     <h2 id="modal-title" style="margin:0 0 4px">Who's learning?</h2>
-    <p class="muted" style="margin:0 0 18px">Each learner has their own progress, marks and code. On a shared computer, add a learner for each person.
-      Progress is saved in this browser, so a different computer starts fresh (use Export / Import in the progress report to move it).</p>
+    <p class="muted" style="margin:0 0 18px">Each learner has their own progress, marks and code. On a shared computer, add a learner for each person.</p>
     <div class="learner-list">${rows}</div>
+    <div id="sync-panel" class="sync-panel">${syncPanelHtml()}</div>
     <form class="learner-add" id="learner-add">
       <input id="learner-new" maxlength="30" placeholder="New learner's name" autocomplete="off" required />
       <button class="btn primary" type="submit">Add learner</button>
@@ -1598,7 +1792,27 @@ function switchLearner(id) {
   save(); profiles.active = id; saveProfiles(); location.reload();
 }
 $("#btn-learner").addEventListener("click", openLearners);
+$("#modal").addEventListener("submit", async (e) => {
+  if (e.target.id === "sync-email-form") {
+    e.preventDefault();
+    const email = $("#sync-email").value.trim(), btn = e.target.querySelector("button");
+    btn.disabled = true; btn.textContent = "Sending…";
+    const err = await sync.sendCode(email);
+    if (err) { btn.disabled = false; btn.textContent = "Email me a code"; return syncMsg(err, true); }
+    sync.pendingEmail = email; refreshSyncPanel();
+  } else if (e.target.id === "sync-code-form") {
+    e.preventDefault();
+    const code = $("#sync-code").value.replace(/\s/g, ""), btn = e.target.querySelector("button");
+    btn.disabled = true; btn.textContent = "Checking…";
+    const err = await sync.verify(sync.pendingEmail, code);
+    if (err) { btn.disabled = false; btn.textContent = "Sign in"; return syncMsg(err, true); }
+    sync.pendingEmail = null; refreshSyncPanel();
+  }
+});
 $("#modal").addEventListener("click", (e) => {
+  if (e.target.closest("[data-sync-now]")) return sync.syncNow();
+  if (e.target.closest("[data-sync-out]")) return sync.signOut();
+  if (e.target.closest("[data-sync-back]")) { e.preventDefault(); sync.pendingEmail = null; return refreshSyncPanel(); }
   const sw = e.target.closest("[data-switch]");
   if (sw) return switchLearner(sw.dataset.switch);
   const rn = e.target.closest("[data-rename]");
@@ -1616,7 +1830,7 @@ $("#modal").addEventListener("click", (e) => {
   if (rm) {
     const l = profiles.list.find((x) => x.id === rm.dataset.remove);
     if (confirm(`Remove ${l.name || "this learner"} and delete all their progress on this computer? This can't be undone.`)) {
-      store.del(keyFor(l.id)); profiles.list = profiles.list.filter((x) => x.id !== l.id); saveProfiles(); openLearners();
+      store.del(keyFor(l.id)); store.del(`pymarker.auth.${l.id}`); profiles.list = profiles.list.filter((x) => x.id !== l.id); saveProfiles(); openLearners();
     }
   }
 });
@@ -1644,3 +1858,4 @@ applyTheme(theme);
 selectChallenge(current().id);
 route();
 vscode.init();
+sync.init();

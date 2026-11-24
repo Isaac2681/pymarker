@@ -46,6 +46,16 @@ Topics live in `TOPICS` in `app.js`. A new challenge must be added to one topic'
 - Shortcut hints show ⌘/⌥ on Macs and Ctrl/Alt on Windows/Linux. The shortcuts themselves accept either.
 - The VS Code sync is for the first learner on the Mac running `serve.py`, so other learners never overwrite those lesson files.
 
+## Sync progress across devices
+
+Sign in with an email code (person button → *Who's learning?* → *Sync across devices*) and that learner's progress
+follows you to every phone and computer. It uses [Supabase](https://supabase.com) (free tier):
+one `progress` row per person, protected by row-level security. Each sync reads, merges and writes, and the merge
+never loses work: solved stays solved, best scores win, the newest code wins, and histories combine.
+
+Setup: create a Supabase project, run `supabase-setup.sql`, and put the project URL and *anon public* key in
+`sync-config.js`. Both values are meant to be public. Never put the `service_role` key in this repo.
+
 ## Use it on a phone
 
 Live at **https://isaac2681.github.io/pymarker/**. Open it on each phone, then use Share → *Add to Home Screen* (iPhone)

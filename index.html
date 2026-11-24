@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" />
-  <link rel="stylesheet" href="style.css?v=2026112404" />
+  <link rel="stylesheet" href="style.css?v=2026112405" />
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("pymarker.theme")==="light"?"light":"dark"}catch(e){}</script>
 </head>
 <body>
@@ -48,6 +48,7 @@
       <div class="chip" title="Marks earned"><b id="stat-points">0</b><span id="stat-max">/ 0 marks</span></div>
       <button class="learner-btn" id="btn-learner" aria-label="Switch learner">
         <span class="avatar" id="learner-initial">👤</span><span class="learner-name" id="learner-name"></span>
+        <span id="sync-dot" class="sync-dot off" role="img" aria-label="Sync status" hidden></span>
       </button>
       <button class="grade-pill" id="btn-dashboard" title="Open your progress report">
         <span class="grade-letter" id="stat-grade">U</span>
@@ -225,11 +226,12 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
-  <script src="challenges.js?v=2026112404"></script>
-  <script src="content/learn.js?v=2026112404"></script>
-  <script src="content/sql.js?v=2026112404"></script>
-  <script src="content/ml.js?v=2026112404"></script>
-  <script src="content/lld.js?v=2026112404"></script>
-  <script src="app.js?v=2026112404"></script>
+  <script src="challenges.js?v=2026112405"></script>
+  <script src="content/learn.js?v=2026112405"></script>
+  <script src="content/sql.js?v=2026112405"></script>
+  <script src="content/ml.js?v=2026112405"></script>
+  <script src="content/lld.js?v=2026112405"></script>
+  <script src="sync-config.js?v=2026112405"></script>
+  <script src="app.js?v=2026112405"></script>
 </body>
 </html>
