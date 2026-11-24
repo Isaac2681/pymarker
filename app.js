@@ -39,8 +39,39 @@ const PLAYGROUND = {
   id: "playground", title: "Playground", level: null, type: "playground",
   starter: `# Playground — try out anything here.\n# Press ▶ Run (${MOD}+Enter). Put input() lines in the "Program input" tab.\n\nname = "PyMarker"\nfor i in range(3):\n    print(f"{i}: hello from {name}")\n`,
 };
-const ALL = [PLAYGROUND, ...CH];
-const byId = Object.fromEntries(ALL.map((c) => [c.id, c]));
+const EXTRA = (k) => (Array.isArray(globalThis[k]) ? globalThis[k] : []);
+// Extra tracks beyond the Python course. Each problem uses the challenges.js schema (SQL ones are marked by result set).
+const TRACKS = [
+  { id: "ml", label: "Machine Learning", icon: "🤖", lang: "python",
+    blurb: "The maths behind machine learning, coded by hand in plain Python: statistics, distances, metrics, regression and nearest neighbours.",
+    items: EXTRA("ML_PROBLEMS").filter((p) => p.track === "ml") },
+  { id: "gpt", label: "Build Your GPT", icon: "✨", lang: "python",
+    blurb: "Build the pieces of a tiny language model step by step: tokenizer, bigram model, sampling, softmax and attention.",
+    items: EXTRA("ML_PROBLEMS").filter((p) => p.track === "gpt") },
+  { id: "lld", label: "Low Level Design", icon: "🧩", lang: "python",
+    blurb: "Object-oriented design: model real systems with classes, and practise patterns like Strategy and Observer.",
+    items: EXTRA("LLD_PROBLEMS") },
+  { id: "sql", label: "Databases (SQL)", icon: "🗄️", lang: "sql",
+    blurb: "Query real tables with SQL, from SELECT and WHERE up to JOINs, GROUP BY, window functions and CTEs. Runs on SQLite in your browser.",
+    items: EXTRA("SQL_PROBLEMS").map((p) => ({ ...p, type: "sql" })) },
+];
+const trackById = Object.assign(Object.create(null), Object.fromEntries(TRACKS.map((t) => [t.id, t])));
+const PY_ALL = [PLAYGROUND, ...CH];
+const ALL = [...PY_ALL];
+{
+  const seen = new Set(PY_ALL.map((c) => c.id));
+  for (const t of TRACKS) {
+    t.items = t.items.filter((c) => {
+      if (seen.has(c.id) || !LEVELS[c.level]) { console.warn("Skipped problem with a duplicate id or bad level:", c.id); return false; }
+      seen.add(c.id); c._track = t.id; return true;
+    });
+    ALL.push(...t.items);
+  }
+}
+const byId = Object.assign(Object.create(null), Object.fromEntries(ALL.map((c) => [c.id, c])));
+const trackOf = (ch) => ch._track || "python";
+const trackList = (ch) => (trackOf(ch) === "python" ? PY_ALL : trackById[trackOf(ch)].items);
+const isSql = (ch) => ch.type === "sql";
 const MAX_POINTS = CH.reduce((s, c) => s + LEVELS[c.level].points, 0);
 
 // Roadmap topics. Each challenge belongs to exactly one; `after` draws the arrows on the roadmap.
@@ -70,7 +101,7 @@ const TOPICS = [
     blurb: "Classes, decorators and generators.", concepts: ["class / self", "decorators", "generators / yield"],
     ids: ["bank_account", "lru_cache", "count_calls", "primes_gen"] },
 ];
-const topicById = Object.fromEntries(TOPICS.map((t) => [t.id, t]));
+const topicById = Object.assign(Object.create(null), Object.fromEntries(TOPICS.map((t) => [t.id, t])));
 const TOPIC_OF = {};
 for (const t of TOPICS) for (const id of t.ids) TOPIC_OF[id] = t;
 const topicOf = (ch) => TOPIC_OF[ch.id];
@@ -110,6 +141,10 @@ for (const [id, p] of Object.entries(state.progress)) {
     t: num(x.t), code: typeof x.code === "string" ? x.code : "", kind: ["ok", "wrong", "error", "timeout"].includes(x.kind) ? x.kind : "wrong",
     passed: num(x.passed), total: num(x.total) })) : undefined;
 }
+state.quizzes = state.quizzes && typeof state.quizzes === "object" ? state.quizzes : {};
+for (const [k, v] of Object.entries(state.quizzes)) state.quizzes[k] = { best: num(v?.best), last: num(v?.last), total: num(v?.total), at: num(v?.at) };
+state.lessons = state.lessons && typeof state.lessons === "object" ? state.lessons : {};
+for (const k of Object.keys(state.lessons)) state.lessons[k] = !!state.lessons[k];
 state.days = Array.isArray(state.days) ? state.days.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)) : [];
 state.fontSize = Math.min(22, Math.max(11, num(state.fontSize) || 14));
 const isPlay = (ch) => ch.type === "playground";
@@ -160,17 +195,17 @@ class PyRunner {
     };
     this.worker.onerror = (e) => this.onStatus("error", e.message);
   }
-  async call(msg) {
+  async call(msg, limit = TIME_LIMIT_MS) {
     await this.ready;
     return new Promise((resolve) => {
       const id = ++this.seq;
       const timer = setTimeout(() => {
         // Runaway code: kill the worker, boot a fresh Python, report a timeout.
         this.worker.terminate();
-        for (const [, p] of this.pending) p.resolve({ timeout: true });
+        for (const [, p] of this.pending) { clearTimeout(p.timer); p.resolve({ timeout: true }); }
         this.pending.clear();
         this.spawn();
-      }, TIME_LIMIT_MS);
+      }, limit);
       this.pending.set(id, { resolve, timer });
       this.worker.postMessage({ id, ...msg });
     });
@@ -215,6 +250,8 @@ function confetti() {
 }
 
 const EXPLAIN = {
+  SQLError: "SQLite couldn't run your query. Check the spelling of keywords, table and column names (look at the Tables section), commas between columns, and quotes around text values like <code>'London'</code>.",
+  EmptyQuery: "There's no query yet. Write a <code>SELECT</code> statement under the comment.",
   SyntaxError: "Python couldn't understand the <em>shape</em> of your code. Look for a missing colon <code>:</code> after <code>if</code>/<code>for</code>/<code>def</code>, an unclosed bracket or quote, or <code>=</code> where you meant <code>==</code>.",
   IndentationError: "The spaces at the start of a line are wrong. Code inside <code>if</code>, <code>for</code>, <code>while</code> and <code>def</code> must be indented (4 spaces), and lines in the same block must line up.",
   TabError: "You've mixed tabs and spaces for indentation. Use spaces only.",
@@ -338,7 +375,7 @@ const vscode = {
   },
   async scaffold() {
     // Create every lesson file (existing files are never overwritten).
-    const files = ALL.map((c) => ({ name: this.fileName(c), header: lessonHeader(c), code: prog(c.id).code ?? c.starter }));
+    const files = PY_ALL.map((c) => ({ name: this.fileName(c), header: lessonHeader(c), code: prog(c.id).code ?? c.starter }));
     const r = await this.api("/api/scaffold", { files });
     this.scaffolded = true;
     return r;
@@ -444,11 +481,15 @@ function renderSidebar() {
   const q = $("#search").value.trim().toLowerCase();
   const f = state.filter;
   $$("#filters button").forEach((b) => b.classList.toggle("on", b.dataset.filter === f));
-  let html = `<button class="ch-item playground-item ${cur === "playground" ? "active" : ""}" data-id="playground">
-    <span class="status play">✦</span><span class="title">Playground</span><span class="score">free code</span></button>`;
+  const tr = trackOf(current()), src = tr === "python" ? CH : trackById[tr].items;
+  $("#filters [data-filter=if]").hidden = tr !== "python";
+  if (tr !== "python" && f === "if") state.filter = "all";
+  let html = tr === "python" ? `<button class="ch-item playground-item ${cur === "playground" ? "active" : ""}" data-id="playground">
+    <span class="status play">✦</span><span class="title">Playground</span><span class="score">free code</span></button>`
+    : `<a class="ch-item track-head" href="#/track/${tr}"><span class="status play">${trackById[tr].icon}</span><span class="title">${esc(trackById[tr].label)}</span><span class="score">all ›</span></a>`;
   let shown = 0;
   for (const [lvl, meta] of Object.entries(LEVELS)) {
-    const items = CH.filter((c) => c.level === lvl);
+    const items = src.filter((c) => c.level === lvl);
     const done = items.filter((c) => prog(c.id).solved).length;
     const visible = items.filter((c) => {
       const p = prog(c.id);
@@ -480,10 +521,12 @@ let leftTab = "task";
 let lastError = null;
 
 function renderTitle() {
-  const ch = current();
-  const i = ALL.indexOf(ch);
+  const ch = current(), list = trackList(ch);
+  const i = list.indexOf(ch);
   $("#btn-prev").disabled = i <= 0;
-  $("#btn-next").disabled = i >= ALL.length - 1;
+  $("#btn-next").disabled = i >= list.length - 1;
+  $("#btn-vscode").hidden = !vscode.available || trackOf(ch) !== "python";
+  $(".lang-tag").textContent = isSql(ch) ? "SQLite" : "Python 3";
   $("#left-tabs").hidden = isPlay(ch);
   $("#btn-submit").hidden = isPlay(ch);
   if (view === "problem") document.title = `${ch.title} · PyMarker`;
@@ -496,7 +539,8 @@ function questionHead(ch) {
     : p.revealed ? `Solution viewed · <b>0</b>/${max} marks`
     : `Worth <b>${pointsAvailable(ch)}</b>/${max} marks${p.hints ? ` (${p.hints} hint${p.hints > 1 ? "s" : ""} used)` : ""}`;
   return `<div class="q-head"><h1 class="q-title">${esc(ch.title)}</h1>${p.solved ? `<span class="solved-tag" title="Solved">✓ Solved</span>` : ""}</div>
-    <div class="q-meta">${levelPill(ch)}${t ? `<button class="chip-btn" data-topic="${t.id}">${t.icon} ${esc(t.label)}</button>` : ""}
+    <div class="q-meta">${levelPill(ch)}${t ? `<button class="chip-btn" data-topic="${t.id}">${t.icon} ${esc(t.label)}</button>`
+      : trackById[trackOf(ch)] ? `<a class="chip-btn" href="#/track/${trackOf(ch)}">${trackById[trackOf(ch)].icon} ${esc(trackById[trackOf(ch)].label)}</a>` : ""}
       <button class="chip-btn" data-open-tab="help">💡 Hints</button><span class="marks-tag">${marks}</span></div>`;
 }
 
@@ -530,6 +574,12 @@ function shortcutsHtml() {
 }
 
 function examplesHtml(ch) {
+  if (isSql(ch)) {
+    const pv = sqlPreviewCache[ch.id];
+    return `<div class="section-label">Tables</div>` + (pv
+      ? `<div id="sql-tables">${pv.tables.map((t) => `<div class="tbl-name">${esc(t.name)}</div>${dataTable(t)}`).join("")}</div>`
+      : `<div id="sql-tables" class="muted small">Loading the tables…</div>`);
+  }
   const vis = ch.tests.filter((t) => !t.hidden);
   const hidden = ch.tests.length - vis.length;
   let html = `<div class="section-label">Examples</div>`;
@@ -635,7 +685,7 @@ function renderGrade(data, ch, earned, firstSolve) {
     : verdictHtml("fail", "✗", "Incorrect", `${Math.round((passed / res.length) * 100)}% of tests passed. Open a failing test to see why.`, passed, res.length);
   const actions = [];
   if (all) {
-    const next = CH[CH.indexOf(ch) + 1];
+    const tl = trackList(ch).filter((c) => !isPlay(c)), next = tl[tl.indexOf(ch) + 1];
     if (next) actions.push(`<button class="btn primary" data-goto="${next.id}">Next: ${esc(next.title)} →</button>`);
     actions.push(`<button class="btn" data-open-tab="solution">Compare with model solution</button>`);
   } else if (prog(ch.id).hints < ch.hints.length) {
@@ -650,7 +700,14 @@ function renderGrade(data, ch, earned, firstSolve) {
     const label = r.hidden ? `Hidden test ${i + 1}` : esc(r.call);
     html += `<details class="test ${r.passed ? "pass" : "fail"}" ${open ? "open" : ""}><summary><span class="st">${r.passed ? "✓" : "✗"}</span><span class="call">${label}</span>${r.hidden ? `<span class="tag">hidden</span>` : ""}</summary>`;
     html += `<div class="test-body">`;
-    if (r.hidden) {
+    if (isSql(ch)) {
+      if (r.error) html += `<span class="k">error</span>${errorBlock(r.error)}`;
+      else if (r.hidden) html += `<span class="k">result</span><span>${r.passed ? "Passed." : esc(r.why || "Different result.")} The hidden dataset has the same tables with different rows, so hard-coded answers fail here.</span>`;
+      else {
+        if (r.why) html += `<span class="k">why</span><span>${esc(r.why)}</span>`;
+        html += `<span class="k">expected</span>${dataTable(r.exp)}<span class="k">yours</span>${dataTable(r.got)}`;
+      }
+    } else if (r.hidden) {
       html += `<span class="k">result</span><span class="err-line" style="color:var(--text-2)">${r.passed ? "Passed." : r.error ? esc(`${r.error.type}: ${r.error.message}`) : "Wrong answer on a hidden case — think about edge cases: empty input, negatives, duplicates, very large numbers."}</span>`;
     } else {
       html += `<span class="k">expected</span><pre>${esc(r.expected)}</pre>`;
@@ -673,6 +730,14 @@ function renderGrade(data, ch, earned, firstSolve) {
 let caseIdx = 0;
 function renderCases() {
   const ch = current();
+  if (isSql(ch)) {
+    const pv = sqlPreviewCache[ch.id];
+    $("#case-pills").innerHTML = `<span class="case-pill on">Example dataset</span>${ch.hiddenSetup ? `<span class="muted small">+ a hidden dataset</span>` : ""}`;
+    $("#case-detail").innerHTML = !pv ? `<span class="muted small">Loading…</span>`
+      : pv.expected?.columns ? `<span class="k">expected result</span>${dataTable(pv.expected)}` : `<span class="muted small">Couldn't load the expected result.</span>`;
+    $("#stdin-wrap").hidden = true;
+    return;
+  }
   const vis = isPlay(ch) ? [] : ch.tests.filter((t) => !t.hidden);
   caseIdx = Math.min(caseIdx, Math.max(0, vis.length - 1));
   const hidden = isPlay(ch) ? 0 : ch.tests.length - vis.length;
@@ -762,6 +827,7 @@ function selectChallenge(id) {
   const ch = current();
   const p = prog(ch.id);
   lastError = null;
+  editor.setOption("mode", isSql(ch) ? "text/x-sqlite" : "python");
   applyingRemote = true;
   editor.setValue(p.code ?? ch.starter);
   applyingRemote = false;
@@ -772,6 +838,7 @@ function selectChallenge(id) {
   leftTab = "task";
   caseIdx = 0;
   renderCases();
+  if (isSql(ch)) loadSqlPreview(ch);
   showConsole("input");
   $("#console-results").innerHTML = isPlay(ch)
     ? placeholder("✦", "Playground", "Press ▶ Run to see your output here.")
@@ -779,18 +846,19 @@ function selectChallenge(id) {
       ? placeholder("✅", "Already solved", `You earned ${p.points}/${LEVELS[ch.level].points} marks. Resubmit any time to check a new approach.`)
       : placeholder("📝", "Write your code, then submit it for marking", "Use ▶ Run to try things out first. Submit runs every test, including hidden ones.");
   renderAll();
-  if (vscode.on) vscode.link(); // keeps VS Code on the same lesson; newest copy wins
+  if (vscode.on) trackOf(ch) === "python" ? vscode.link() : vscode.unlink(); // keeps VS Code on the same lesson; newest copy wins
   if (view === "problem" && !isTouch) editor.focus();
 }
 const openProblem = (id) => { location.hash = `#/problem/${id}`; };
 const go = (delta) => {
-  const i = ALL.indexOf(current()) + delta;
-  if (ALL[i]) openProblem(ALL[i].id);
+  const list = trackList(current()), i = list.indexOf(current()) + delta;
+  if (list[i]) openProblem(list[i].id);
 };
 
 async function runCode() {
   if (busy) return;
   setBusy(true, "run");
+  if (isSql(current())) return runSql();
   const data = await runner.call({ action: "run", code: editor.getValue(), stdin: $("#stdin").value });
   setBusy(false);
   showConsole("results");
@@ -812,7 +880,9 @@ async function submitCode() {
   if (busy || isPlay(ch)) return;
   const p = prog(ch.id);
   setBusy(true, "grade");
-  const data = await runner.call({ action: "grade", code: editor.getValue(), spec: { type: ch.type, func: ch.func, tests: ch.tests } });
+  const data = isSql(ch)
+    ? await runner.call({ action: "grade_sql", code: editor.getValue(), spec: { setup: ch.setup, hiddenSetup: ch.hiddenSetup, solution: ch.solution, ordered: !!ch.ordered } }, sqlLimit()).then((d) => (noteSql(d), d))
+    : await runner.call({ action: "grade", code: editor.getValue(), spec: { type: ch.type, func: ch.func, tests: ch.tests } });
   setBusy(false);
   const allPass = !data.timeout && !data.load_error && !data.internal_error && data.results?.length && data.results.every((r) => r.passed);
   let earned = 0, firstSolve = false;
@@ -997,7 +1067,7 @@ $("#import-file").addEventListener("change", async (e) => {
 document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
   if (e.key === "Escape" && !$("#modal").hidden) return closeModal();
-  if (e.key === "Escape") closeTopic();
+  if (e.key === "Escape") { closeTopic(); closeMenu(); }
   if (view !== "problem") return;
   if (mod && e.key === "Enter") { e.preventDefault(); return e.shiftKey ? submitCode() : runCode(); }
   if (e.altKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) { e.preventDefault(); go(e.key === "ArrowRight" ? 1 : -1); }
@@ -1006,13 +1076,14 @@ document.addEventListener("keydown", (e) => {
 
 // ═════════════════════════ views & routing ═════════════════════════
 // #/ → roadmap   #/problems → problem list   #/problem/<id> → workspace
-const VIEWS = { roadmap: "#view-roadmap", problems: "#view-problems", problem: "#view-problem" };
+const VIEWS = { roadmap: "#view-roadmap", problems: "#view-problems", problem: "#view-problem", page: "#view-page" };
 function showView(v) {
   const changed = view !== v;
   view = v;
   document.body.dataset.view = v;
   for (const [k, sel] of Object.entries(VIEWS)) $(sel).hidden = k !== v;
   $$(".main-nav a").forEach((a) => a.classList.toggle("on", a.dataset.nav === v));
+  renderMenu();
   closeDrawer();
   if (v !== "roadmap") closeTopic();
   if (v === "roadmap") { renderRoadmap(); document.title = "Roadmap · PyMarker"; }
@@ -1022,6 +1093,8 @@ function showView(v) {
 }
 function route() {
   const h = location.hash;
+  let m2;
+  closeMenu();
   const m = h.match(/^#\/problem\/([\w-]+)/);
   if (m && byId[m[1]]) {
     if (m[1] !== state.current) selectChallenge(m[1]);
@@ -1029,6 +1102,12 @@ function route() {
     if (!isTouch) editor.focus();
   } else if (h.startsWith("#/problems")) {
     showView("problems");
+  } else if ((m2 = h.match(/^#\/(track|cheatsheets|quizzes|quiz|system-design|lesson)(?:\/([\w-]+))?/))) {
+    showView("page");
+    const [, kind, arg] = m2;
+    ({ track: renderTrack, cheatsheets: renderCheatsheets, quizzes: renderQuizzes, quiz: renderQuiz,
+       "system-design": renderLessons, lesson: renderLesson })[kind](arg);
+    $("#view-page").scrollTop = 0;
   } else {
     showView("roadmap");
     if (pendingTopic) { openTopic(pendingTopic); pendingTopic = null; }
@@ -1240,6 +1319,242 @@ function applyTheme(t) {
   document.querySelector('meta[name="theme-color"]').content = t === "light" ? "#f6f7fb" : "#0a0d13";
 }
 $("#btn-theme").onclick = () => { applyTheme(theme === "light" ? "dark" : "light"); store.set(THEME_KEY, theme); if (view === "roadmap") drawEdges(); };
+
+
+// ═════════════════════════ SQL helpers ═════════════════════════
+let sqlWarm = false; // the first SQL call downloads SQLite, so allow longer
+const sqlLimit = () => (sqlWarm ? TIME_LIMIT_MS : 45000);
+// A timeout restarts the worker (and SQLite must be downloaded again); only a real answer means it's loaded.
+const noteSql = (d) => { sqlWarm = !d.timeout && !d.internal_error; };
+const sqlPreviewCache = {};
+const cell = (v) => (v === null ? `<span class="null">NULL</span>` : esc(typeof v === "number" && !Number.isInteger(v) ? +v.toFixed(4) : v));
+function dataTable(t, cap = 50) {
+  if (!t || !t.columns) return `<span class="muted small">(no result)</span>`;
+  const rows = t.rows.slice(0, cap);
+  return `<div class="tbl-scroll"><table class="data"><thead><tr>${t.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${r.map((v) => `<td>${cell(v)}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${t.columns.length}" class="muted">(no rows)</td></tr>`}</tbody></table></div>`
+    + (t.rows.length > cap ? `<p class="muted small">… ${t.rows.length - cap} more rows</p>` : "");
+}
+async function loadSqlPreview(ch) {
+  if (sqlPreviewCache[ch.id]) return; // examplesHtml / renderCases read the cache directly
+  const pv = await runner.call({ action: "sql_preview", setup: ch.setup, code: ch.solution }, sqlLimit());
+  noteSql(pv);
+  if (pv.timeout || pv.internal_error || !pv.tables) return;
+  sqlPreviewCache[ch.id] = pv;
+  if (current() !== ch) return;
+  if (leftTab === "task") renderLeft();
+  renderCases();
+}
+async function runSql() {
+  const ch = current();
+  const data = await runner.call({ action: "run_sql", code: editor.getValue(), setup: ch.setup }, sqlLimit());
+  noteSql(data);
+  setBusy(false);
+  showConsole("results");
+  const out = $("#console-results");
+  if (data.timeout) { out.innerHTML = verdictHtml("fail", "⏱", "Time limit exceeded", "Your query took too long."); return; }
+  if (data.internal_error) { out.innerHTML = verdictHtml("fail", "!", "Something went wrong", esc(data.internal_error)); return; }
+  if (data.error) { lastError = data.error; out.innerHTML = errorBlock(data.error) + explainBlock(data.error); renderLeft(); return; }
+  out.innerHTML = `<div class="out-label"><span>Result · ${data.count} row${data.count === 1 ? "" : "s"}</span><span>▶ Run on the example dataset — not marked</span></div>${dataTable(data)}`;
+}
+
+// ═════════════════════════ menu ═════════════════════════
+const menuOpenGroups = new Set(["python"]);
+function renderMenu() {
+  const h = location.hash || "#/";
+  const solvedOf = (items) => items.filter((c) => prog(c.id).solved).length;
+  const link = (href, label, extra = "", match = href) =>
+    `<a class="m-sub ${h === match || h.startsWith(match + "/") ? "on" : ""}" href="${href}"><span>${label}</span>${extra}</a>`;
+  const count = (items) => (items.length ? `<span class="m-count">${solvedOf(items)}/${items.length}</span>` : `<span class="m-soon">SOON</span>`);
+  const ico = {
+    python: `<path d="m8 7-5 5 5 5m8-10 5 5-5 5"/>`,
+    ai: `<path d="M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2 2m8 8 2 2M6 18l2-2m8-8 2-2"/>`,
+    sd: `<path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 0v20M3 7l9 5 9-5"/>`,
+    ml: `<circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4M5 5l3 3m8 8 3 3M5 19l3-3m8-8 3-3"/>`,
+    lld: `<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3"/>`,
+    db: `<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>`,
+  };
+  const svg = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ico[k]}</svg>`;
+  const group = (key, icon, label, subs) => {
+    const open = menuOpenGroups.has(key);
+    return `<div class="m-group ${open ? "open" : ""}"><button class="m-item" data-group="${key}" aria-expanded="${open}">${svg(icon)}<span>${label}</span>
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="m-subs">${subs}</div></div>`;
+  };
+  const single = (href, icon, label, extra = "") =>
+    `<a class="m-item ${h === href || h.startsWith(href + "/") ? "on" : ""}" href="${href}">${svg(icon)}<span>${label}</span>${extra}</a>`;
+  const ml = trackById.ml.items, gpt = trackById.gpt.items;
+  const lessons = EXTRA("SD_LESSONS");
+  $("#menu-body").innerHTML =
+    group("python", "python", "Python Course",
+      link("#/", "Roadmap", "", "#/") + link("#/problems", "Problems", count(CH)) + link("#/cheatsheets", "Cheatsheets", EXTRA("CHEATSHEETS").length ? "" : `<span class="m-soon">SOON</span>`)
+      + link("#/quizzes", "Quizzes", EXTRA("QUIZZES").length ? "" : `<span class="m-soon">SOON</span>`) + link("#/problem/playground", "Playground"))
+    + `<div class="m-item disabled" title="Coming soon">${svg("ai")}<span>AI Coding</span><span class="m-beta">SOON</span></div>`
+    + single("#/system-design", "sd", "System Design", lessons.length ? `<span class="m-count">${lessons.filter((l) => state.lessons[l.id]).length}/${lessons.length}</span>` : `<span class="m-soon">SOON</span>`)
+    + group("ml", "ml", "Machine Learning", link("#/track/ml", "Problems", count(ml)) + link("#/track/gpt", "Build Your GPT", count(gpt)))
+    + single("#/track/lld", "lld", "Low Level Design", count(trackById.lld.items))
+    + single("#/track/sql", "db", "Databases", count(trackById.sql.items));
+}
+function openMenu() {
+  renderMenu();
+  $("#menu-drawer").hidden = false; $("#menu-backdrop").hidden = false;
+  requestAnimationFrame(() => document.body.classList.add("menu-open"));
+  $("#btn-nav-menu").setAttribute("aria-expanded", "true");
+}
+function closeMenu() {
+  if ($("#menu-drawer").hidden) return;
+  document.body.classList.remove("menu-open");
+  $("#menu-drawer").hidden = true; $("#menu-backdrop").hidden = true;
+  $("#btn-nav-menu").setAttribute("aria-expanded", "false");
+}
+$("#btn-nav-menu").onclick = () => ($("#menu-drawer").hidden ? openMenu() : closeMenu());
+$("#menu-close").onclick = closeMenu;
+$("#menu-backdrop").onclick = closeMenu;
+$("#menu-body").addEventListener("click", (e) => {
+  const g = e.target.closest("[data-group]");
+  if (g) { menuOpenGroups.has(g.dataset.group) ? menuOpenGroups.delete(g.dataset.group) : menuOpenGroups.add(g.dataset.group); renderMenu(); return; }
+  if (e.target.closest("a")) closeMenu();
+});
+
+// ═════════════════════════ pages ═════════════════════════
+const page = (html) => { $("#page-body").innerHTML = html; };
+const notFound = (what, back, backLabel) => page(`<div class="empty-list">That ${what} doesn't exist. <a href="${back}">${backLabel}</a></div>`);
+
+function renderTrack(id) {
+  const t = trackById[id];
+  if (!t) return notFound("track", "#/", "Back to the roadmap");
+  document.title = `${t.label} · PyMarker`;
+  const done = t.items.filter((c) => prog(c.id).solved).length;
+  let html = `<div class="pg-head"><div class="pg-icon">${t.icon}</div><div><h1>${esc(t.label)}</h1><p class="muted">${esc(t.blurb)}</p></div></div>
+    <div class="pg-progress"><span class="td-bar"><i style="width:${t.items.length ? (done / t.items.length) * 100 : 0}%"></i></span><span>${done} / ${t.items.length} solved</span></div>`;
+  if (!t.items.length) html += `<div class="empty-list">Problems for this track are on their way.</div>`;
+  for (const [lvl, meta] of Object.entries(LEVELS)) {
+    const items = t.items.filter((c) => c.level === lvl);
+    if (!items.length) continue;
+    html += `<section class="pl-group"><header><span class="pl-topic">${meta.label}</span><span class="pl-count">${items.filter((c) => prog(c.id).solved).length}/${items.length}</span></header>
+      <table class="ptable">${tableHead}<tbody>${problemRows(items)}</tbody></table></section>`;
+  }
+  page(html);
+}
+
+function renderCheatsheets(id) {
+  const sheets = EXTRA("CHEATSHEETS");
+  document.title = "Cheatsheets · PyMarker";
+  if (!sheets.length) return page(`<div class="empty-list">Cheatsheets are on their way.</div>`);
+  const cur = sheets.find((x) => x.id === id) || sheets[0];
+  const practice = topicById[cur.topic] ? `<button class="btn" data-topic-go="${cur.topic}">Practise ${esc(topicById[cur.topic].label)} →</button>`
+    : trackById[cur.topic] ? `<a class="btn" href="#/track/${cur.topic}">Practise ${esc(trackById[cur.topic].label)} →</a>` : "";
+  page(`<div class="pg-head"><div class="pg-icon">📄</div><div><h1>Cheatsheets</h1><p class="muted">Quick reference for each topic. Keep one open while you solve problems.</p></div></div>
+    <div class="cs-layout">
+      <nav class="cs-list">${sheets.map((x) => `<a href="#/cheatsheets/${x.id}" class="${x === cur ? "on" : ""}">${x.icon} ${esc(x.title)}</a>`).join("")}</nav>
+      <article class="cs-body"><div class="cs-title"><h2>${cur.icon} ${esc(cur.title)}</h2>${practice}</div>
+        ${cur.sections.map((sec) => `<section class="cs-sec"><h3>${esc(sec.heading)}</h3><div class="task">${sec.html}</div></section>`).join("")}</article>
+    </div>`);
+}
+
+const QUIZ_TRACKS = { python: "Python", sql: "Databases (SQL)", ml: "Machine Learning", "system-design": "System Design" };
+function renderQuizzes() {
+  const qs = EXTRA("QUIZZES");
+  document.title = "Quizzes · PyMarker";
+  if (!qs.length) return page(`<div class="empty-list">Quizzes are on their way.</div>`);
+  let html = `<div class="pg-head"><div class="pg-icon">🧠</div><div><h1>Quizzes</h1><p class="muted">Quick multiple-choice checks. Your best score for each quiz is saved.</p></div></div>`;
+  for (const [tk, label] of Object.entries(QUIZ_TRACKS)) {
+    const list = qs.filter((q) => q.track === tk);
+    if (!list.length) continue;
+    html += `<div class="section-label">${label}</div><div class="quiz-grid">${list.map((q) => {
+      const r = state.quizzes[q.id], n = q.questions.length;
+      return `<a class="quiz-card" href="#/quiz/${q.id}"><span class="qc-icon">${q.icon}</span><span class="qc-title">${esc(q.title)}</span>
+        <span class="qc-meta">${n} questions</span>${r ? `<span class="qc-best ${r.best === n ? "full" : ""}">Best ${r.best}/${n}</span>` : `<span class="qc-best new">Not taken</span>`}</a>`;
+    }).join("")}</div>`;
+  }
+  page(html);
+}
+
+let quizRun = null; // { id, i, picks: [] }
+function renderQuiz(id) {
+  const quiz = EXTRA("QUIZZES").find((q) => q.id === id);
+  if (!quiz) return notFound("quiz", "#/quizzes", "All quizzes");
+  document.title = `${quiz.title} quiz · PyMarker`;
+  if (!quizRun || quizRun.id !== id) quizRun = { id, i: 0, picks: [] };
+  const n = quiz.questions.length, { i, picks } = quizRun;
+  if (i >= n) {
+    const score = picks.filter((p, k) => p === quiz.questions[k].answer).length;
+    const prev = state.quizzes[id];
+    if (!quizRun.saved) {
+      state.quizzes[id] = { best: Math.max(score, prev?.best || 0), last: score, total: n, at: Date.now() };
+      quizRun.saved = true; save();
+      if (score === n) confetti();
+    }
+    const pct = Math.round((score / n) * 100);
+    return page(`<div class="quiz-wrap"><div class="quiz-done">
+      <div class="qd-score ${pct >= 80 ? "good" : pct >= 50 ? "ok" : "low"}">${score}<span>/${n}</span></div>
+      <h2>${pct === 100 ? "Perfect score! 🏆" : pct >= 80 ? "Great work!" : pct >= 50 ? "Good effort — review the ones you missed." : "Keep going — the cheatsheet will help."}</h2>
+      <p class="muted">Best: ${state.quizzes[id].best}/${n}</p>
+      <div class="qd-actions"><button class="btn primary" data-quiz-retry>Try again</button><a class="btn" href="#/quizzes">All quizzes</a></div></div>
+      <div class="section-label">Review</div>
+      ${quiz.questions.map((q, k) => `<div class="q-review ${picks[k] === q.answer ? "right" : "wrong"}"><div class="qr-mark">${picks[k] === q.answer ? "✓" : "✗"}</div>
+        <div><div class="task">${q.q}</div><p class="small">${picks[k] === q.answer ? "" : `You chose: <b>${esc(q.options[picks[k]])}</b> · `}Answer: <b>${esc(q.options[q.answer])}</b></p><div class="explain">${q.explain}</div></div></div>`).join("")}</div>`);
+  }
+  const q = quiz.questions[i], picked = picks[i];
+  const answered = picked !== undefined;
+  page(`<div class="quiz-wrap">
+    <div class="quiz-top"><a href="#/quizzes" class="muted small">← All quizzes</a><span class="muted small">${quiz.icon} ${esc(quiz.title)}</span><span class="muted small">Question ${i + 1} of ${n}</span></div>
+    <div class="quiz-bar"><i style="width:${(i / n) * 100}%"></i></div>
+    <div class="quiz-q task">${q.q}</div>
+    <div class="quiz-opts">${q.options.map((o, k) => {
+      const cls = !answered ? "" : k === q.answer ? "right" : k === picked ? "wrong" : "dim";
+      return `<button class="quiz-opt ${cls}" data-pick="${k}" ${answered ? "disabled" : ""}><span class="qo-key">${"ABCD"[k]}</span><span>${esc(o)}</span></button>`;
+    }).join("")}</div>
+    ${answered ? `<div class="quiz-feedback ${picked === q.answer ? "right" : "wrong"}"><b>${picked === q.answer ? "✓ Correct!" : "✗ Not quite."}</b><div>${q.explain}</div></div>
+      <div class="quiz-next"><button class="btn primary" data-quiz-next>${i + 1 < n ? "Next question →" : "See my score →"}</button></div>` : ""}
+  </div>`);
+}
+
+function renderLessons() {
+  const ls = EXTRA("SD_LESSONS");
+  document.title = "System Design · PyMarker";
+  if (!ls.length) return page(`<div class="empty-list">System Design lessons are on their way.</div>`);
+  const done = ls.filter((l) => state.lessons[l.id]).length;
+  page(`<div class="pg-head"><div class="pg-icon">🏛️</div><div><h1>System Design</h1><p class="muted">How real apps are built to serve millions of people. Read each lesson, then take its quiz.</p></div></div>
+    <div class="pg-progress"><span class="td-bar"><i style="width:${(done / ls.length) * 100}%"></i></span><span>${done} / ${ls.length} lessons done</span></div>
+    <div class="lesson-list">${ls.map((l, k) => {
+      const qz = state.quizzes[l.quiz], qd = EXTRA("QUIZZES").find((q) => q.id === l.quiz);
+      return `<a class="lesson-card ${state.lessons[l.id] ? "done" : ""}" href="#/lesson/${l.id}"><span class="lc-num">${state.lessons[l.id] ? "✓" : k + 1}</span>
+        <span class="lc-main"><b>${l.icon} ${esc(l.title)}</b><span class="muted small">${LEVELS[l.level]?.label || ""} · ${l.minutes || 5} min read${qz && qd ? ` · quiz ${qz.best}/${qd.questions.length}` : ""}</span></span><span class="muted">›</span></a>`;
+    }).join("")}</div>`);
+}
+function renderLesson(id) {
+  const ls = EXTRA("SD_LESSONS"), k = ls.findIndex((l) => l.id === id), l = ls[k];
+  if (!l) return notFound("lesson", "#/system-design", "All lessons");
+  document.title = `${l.title} · PyMarker`;
+  const prev = ls[k - 1], next = ls[k + 1], hasQuiz = EXTRA("QUIZZES").some((q) => q.id === l.quiz);
+  page(`<article class="lesson">
+    <a href="#/system-design" class="muted small">← System Design</a>
+    <h1>${l.icon} ${esc(l.title)}</h1><p class="muted small">${LEVELS[l.level]?.label || ""} · ${l.minutes || 5} min read · Lesson ${k + 1} of ${ls.length}</p>
+    <div class="task lesson-body">${l.html}</div>
+    <div class="lesson-actions">
+      <button class="btn ${state.lessons[l.id] ? "" : "primary"}" data-lesson-done="${l.id}">${state.lessons[l.id] ? "✓ Marked as done" : "Mark as done"}</button>
+      ${hasQuiz ? `<a class="btn" href="#/quiz/${l.quiz}">Take the quiz →</a>` : ""}
+    </div>
+    <div class="lesson-nav">${prev ? `<a href="#/lesson/${prev.id}">← ${esc(prev.title)}</a>` : "<span></span>"}${next ? `<a href="#/lesson/${next.id}">${esc(next.title)} →</a>` : ""}</div>
+  </article>`);
+}
+
+$("#page-body").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-open]");
+  if (row) { e.preventDefault(); return openProblem(row.dataset.open); }
+  const pk = e.target.closest("[data-pick]");
+  if (pk && quizRun && quizRun.picks[quizRun.i] === undefined) { quizRun.picks[quizRun.i] = +pk.dataset.pick; return renderQuiz(quizRun.id); }
+  if (e.target.closest("[data-quiz-next]")) { quizRun.i++; renderQuiz(quizRun.id); return $("#view-page").scrollTo(0, 0); }
+  if (e.target.closest("[data-quiz-retry]")) { const id = quizRun.id; quizRun = null; return renderQuiz(id); }
+  const ld = e.target.closest("[data-lesson-done]");
+  if (ld) { state.lessons[ld.dataset.lessonDone] = !state.lessons[ld.dataset.lessonDone]; save(); renderLesson(ld.dataset.lessonDone); renderMenu(); return; }
+  const tg = e.target.closest("[data-topic-go]");
+  if (tg) { pendingTopic = tg.dataset.topicGo; location.hash = "#/"; }
+});
+$("#page-body").addEventListener("keydown", (e) => {
+  const row = e.target.closest("[data-open]");
+  if (row && e.key === "Enter") openProblem(row.dataset.open);
+});
 
 // ═════════════════════════ learners ═════════════════════════
 // Several people can share one browser; each learner's progress lives under its own key.

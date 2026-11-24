@@ -17,11 +17,14 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" />
-  <link rel="stylesheet" href="style.css?v=2026112402" />
+  <link rel="stylesheet" href="style.css?v=2026112404" />
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("pymarker.theme")==="light"?"light":"dark"}catch(e){}</script>
 </head>
 <body>
   <header class="topbar">
+    <button id="btn-nav-menu" class="btn icon ghost nav-menu-btn" aria-label="Open menu" aria-controls="menu-drawer" aria-expanded="false" title="Menu">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
     <button id="btn-menu" class="btn icon ghost menu-btn" aria-label="Show problem list" aria-controls="sidebar" aria-expanded="false" title="Problem list">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>
     </button>
@@ -58,6 +61,20 @@
 
     <div id="py-status" class="py-status loading" title="Python runtime"><span class="dot"></span><span class="txt">Loading Python</span></div>
   </header>
+
+  <!-- ═══ Main menu (slide-out) ═══ -->
+  <aside id="menu-drawer" class="menu-drawer" aria-label="Menu" hidden>
+    <div class="menu-head"><span>Menu</span>
+      <button class="btn icon ghost" id="menu-close" aria-label="Close menu" title="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4v16M15 12H4m0 0 5-5m-5 5 5 5"/></svg>
+      </button>
+    </div>
+    <nav id="menu-body"></nav>
+  </aside>
+  <div id="menu-backdrop" class="backdrop" hidden></div>
+
+  <!-- ═══ Generic page (tracks, cheatsheets, quizzes, system design) ═══ -->
+  <main id="view-page" class="view" hidden><div id="page-body" class="page-wrap"></div></main>
 
   <!-- ═══ Roadmap ═══ -->
   <main id="view-roadmap" class="view" hidden>
@@ -204,10 +221,15 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
-  <script src="challenges.js?v=2026112402"></script>
-  <script src="app.js?v=2026112402"></script>
+  <script src="challenges.js?v=2026112404"></script>
+  <script src="content/learn.js?v=2026112404"></script>
+  <script src="content/sql.js?v=2026112404"></script>
+  <script src="content/ml.js?v=2026112404"></script>
+  <script src="content/lld.js?v=2026112404"></script>
+  <script src="app.js?v=2026112404"></script>
 </body>
 </html>

@@ -10,6 +10,18 @@ Laid out like a coding-practice site:
 - **Problem** (`#/problem/<id>`): Question / Hints / Solution / Submissions tabs, the editor, and a console with
   *Testcases* (Case 1, Case 2…) and *Result*, plus Run and Submit. Light/dark theme toggle in the top bar.
 
+**Menu** (☰, top left) opens everything else:
+- **Python Course:** Roadmap, Problems, Cheatsheets (10), Quizzes (18 quizzes, 124 questions), Playground
+- **System Design:** 8 lessons, each with a quiz
+- **Machine Learning:** 10 ML fundamentals problems, plus *Build Your GPT* (6 steps, from a tokenizer to attention)
+- **Low Level Design:** 8 object-oriented design problems (Parking Lot, Vending Machine, Observer, Strategy…)
+- **Databases:** 16 SQL problems on SQLite in the browser, marked by comparing your result set with the model
+  answer on the example data *and* a hidden dataset
+- AI Coding: coming soon
+
+Content lives in `content/` (`learn.js`, `sql.js`, `ml.js`, `lld.js`). Check the problem sets with `tools/verify.py`
+in the same way as `challenges.js`.
+
 Topics live in `TOPICS` in `app.js`. A new challenge must be added to one topic's `ids`, or the console warns.
 
 - **53 challenges** — 22 Beginner (10 marks), 18 Intermediate (20), 13 Advanced (35), including a
