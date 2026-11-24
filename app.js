@@ -13,7 +13,7 @@ const TIME_LIMIT_MS = 8000;
 const PROFILES_KEY = "pymarker.profiles";
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } },
   del(k) { try { localStorage.removeItem(k); } catch {} },
 };
 const profiles = (() => {
@@ -43,14 +43,75 @@ const ALL = [PLAYGROUND, ...CH];
 const byId = Object.fromEntries(ALL.map((c) => [c.id, c]));
 const MAX_POINTS = CH.reduce((s, c) => s + LEVELS[c.level].points, 0);
 
+// Roadmap topics. Each challenge belongs to exactly one; `after` draws the arrows on the roadmap.
+const TOPICS = [
+  { id: "basics", label: "Python Basics", icon: "🐍", row: 0, after: [],
+    blurb: "Printing, reading input, variables and arithmetic.", concepts: ["print()", "input()", "int() / float()", "f-strings"],
+    ids: ["hello", "greet", "add", "c_to_f"] },
+  { id: "conditionals", label: "if / elif / else", icon: "🔀", row: 1, after: ["basics"],
+    blurb: "Making decisions: comparisons, elif chains, and / or, nested ifs and guard clauses.", concepts: ["== != < > <= >=", "elif chains", "and / or / not", "nested if", "guard clauses", "match / case"],
+    ids: ["even_odd", "largest", "grade", "fizzbuzz", "absolute", "password_check", "sign", "bigger", "ticket_price", "temperature", "traffic_light", "day_type", "bmi_category", "leap_year", "triangle_type", "season", "rps", "calculator", "shipping", "valid_date", "income_tax", "password_strength", "text_adventure"] },
+  { id: "loops", label: "Loops", icon: "🔁", row: 2, after: ["conditionals"],
+    blurb: "Repeating work with for and while loops, ranges and running totals.", concepts: ["for", "range()", "while", "running totals"],
+    ids: ["times_table", "total", "count_vowels", "is_prime"] },
+  { id: "strings", label: "Strings", icon: "🔤", row: 3, after: ["loops"],
+    blurb: "Slicing, comparing and transforming text.", concepts: ["slicing [::-1]", ".lower()", "sorted()", "ord() / chr()"],
+    ids: ["reverse_string", "palindrome", "anagrams", "caesar", "rle"] },
+  { id: "collections", label: "Lists & Dictionaries", icon: "📦", row: 3, after: ["loops"],
+    blurb: "Storing many values: lists, sets and dictionaries.", concepts: ["lists", "sets", "dict counting", "sorting"],
+    ids: ["unique", "second_largest", "word_count", "merge_intervals"] },
+  { id: "recursion", label: "Functions & Recursion", icon: "🌀", row: 4, after: ["strings", "collections"],
+    blurb: "Functions that call themselves, and remembering results.", concepts: ["base case", "recursive case", "memoisation"],
+    ids: ["factorial", "fib", "flatten", "grid_paths"] },
+  { id: "algorithms", label: "Algorithms", icon: "🧠", row: 5, after: ["recursion"],
+    blurb: "Classic techniques: stacks, binary search, sliding windows.", concepts: ["stacks", "binary search", "sliding window", "greedy"],
+    ids: ["balanced", "rpn", "roman", "binary_search", "longest_unique"] },
+  { id: "oop", label: "Classes & Advanced", icon: "🏗️", row: 5, after: ["recursion"],
+    blurb: "Classes, decorators and generators.", concepts: ["class / self", "decorators", "generators / yield"],
+    ids: ["bank_account", "lru_cache", "count_calls", "primes_gen"] },
+];
+const topicById = Object.fromEntries(TOPICS.map((t) => [t.id, t]));
+const TOPIC_OF = {};
+for (const t of TOPICS) for (const id of t.ids) TOPIC_OF[id] = t;
+const topicOf = (ch) => TOPIC_OF[ch.id];
+const topicItems = (t) => CH.filter((c) => TOPIC_OF[c.id] === t); // challenge order, not list order
+{
+  const missing = CH.filter((c) => !TOPIC_OF[c.id]).map((c) => c.id);
+  if (missing.length) console.warn("Challenges with no roadmap topic:", missing);
+}
+
 // ═════════════════════════ state ═════════════════════════
 const state = Object.assign(
   { progress: {}, current: null, days: [], fontSize: 14, filter: "all", collapsed: {} },
   (() => { try { return JSON.parse(store.get(STORE_KEY)) || {}; } catch { return {}; } })()
 );
-const save = () => store.set(STORE_KEY, JSON.stringify(state));
+let warnedFull = false;
+function save() {
+  if (store.set(STORE_KEY, JSON.stringify(state))) return;
+  // Out of space: drop saved submission code (oldest first) so marks and progress can still be saved.
+  for (const p of Object.values(state.progress)) if (p.subs) p.subs = p.subs.slice(-3).map((x, i, a) => (i < a.length - 1 ? { ...x, code: "" } : x));
+  if (!store.set(STORE_KEY, JSON.stringify(state)) && !warnedFull) {
+    warnedFull = true;
+    toast("⚠️ This browser's storage is full, so progress can't be saved. Export it from the progress report.", 6000);
+  }
+}
 const prog = (id) => (state.progress[id] ||= { solved: false, points: 0, hints: 0, fails: 0, submits: 0, revealed: false, code: null });
 const current = () => byId[state.current] || CH[0];
+let view = null; // "roadmap" | "problems" | "problem"
+// Progress can come from an imported file, so force every numeric field to be a number before it's ever rendered.
+const num = (v) => (Number.isFinite(+v) ? +v : 0);
+if (!state.progress || typeof state.progress !== "object") state.progress = {};
+for (const [id, p] of Object.entries(state.progress)) {
+  if (!p || typeof p !== "object") { delete state.progress[id]; continue; }
+  for (const k of ["points", "hints", "fails", "submits", "editedAt"]) if (k in p) p[k] = num(p[k]);
+  p.solved = !!p.solved; p.revealed = !!p.revealed;
+  if (p.code != null && typeof p.code !== "string") p.code = null;
+  p.subs = Array.isArray(p.subs) ? p.subs.filter((x) => x && typeof x === "object").map((x) => ({
+    t: num(x.t), code: typeof x.code === "string" ? x.code : "", kind: ["ok", "wrong", "error", "timeout"].includes(x.kind) ? x.kind : "wrong",
+    passed: num(x.passed), total: num(x.total) })) : undefined;
+}
+state.days = Array.isArray(state.days) ? state.days.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)) : [];
+state.fontSize = Math.min(22, Math.max(11, num(state.fontSize) || 14));
 const isPlay = (ch) => ch.type === "playground";
 const levelIndex = (ch) => CH.filter((c) => c.level === ch.level).indexOf(ch) + 1;
 
@@ -362,8 +423,6 @@ const vscode = {
 // ═════════════════════════ rendering ═════════════════════════
 function renderHeader() {
   const t = totals();
-  $("#overall-fill").style.width = `${(t.solved / CH.length) * 100}%`;
-  $("#overall-label").textContent = `${t.solved} of ${CH.length} solved`;
   $("#stat-points").textContent = t.points;
   $("#stat-max").textContent = `/ ${MAX_POINTS} marks`;
   $("#stat-pct").textContent = `${t.pct}%`;
@@ -422,21 +481,23 @@ let lastError = null;
 
 function renderTitle() {
   const ch = current();
-  $("#ch-title").textContent = ch.title;
-  if (isPlay(ch)) {
-    $("#ch-meta").innerHTML = `<span class="badge play">Sandbox</span><span>No marking — just run code</span>`;
-  } else {
-    const p = prog(ch.id), max = LEVELS[ch.level].points;
-    const marks = p.solved ? `Earned <b>${p.points}</b>/${max} marks`
-      : p.revealed ? `Solution viewed · <b>0</b>/${max} marks`
-      : `Worth <b>${pointsAvailable(ch)}</b>/${max} marks${p.hints ? ` (${p.hints} hint${p.hints > 1 ? "s" : ""} used)` : ""}`;
-    $("#ch-meta").innerHTML = `<span class="badge ${ch.level}">${LEVELS[ch.level].label} ${levelIndex(ch)}</span>${ch.topic === "if" ? `<span class="badge topic">if / elif / else</span>` : ""}<span class="sep">•</span><span class="marks-tag">${marks}</span>`;
-  }
   const i = ALL.indexOf(ch);
   $("#btn-prev").disabled = i <= 0;
   $("#btn-next").disabled = i >= ALL.length - 1;
   $("#left-tabs").hidden = isPlay(ch);
   $("#btn-submit").hidden = isPlay(ch);
+  if (view === "problem") document.title = `${ch.title} · PyMarker`;
+}
+
+const levelPill = (ch) => `<span class="lvl-pill ${ch.level}">${LEVELS[ch.level].label}</span>`;
+function questionHead(ch) {
+  const p = prog(ch.id), max = LEVELS[ch.level].points, t = topicOf(ch);
+  const marks = p.solved ? `Earned <b>${p.points}</b>/${max} marks`
+    : p.revealed ? `Solution viewed · <b>0</b>/${max} marks`
+    : `Worth <b>${pointsAvailable(ch)}</b>/${max} marks${p.hints ? ` (${p.hints} hint${p.hints > 1 ? "s" : ""} used)` : ""}`;
+  return `<div class="q-head"><h1 class="q-title">${esc(ch.title)}</h1>${p.solved ? `<span class="solved-tag" title="Solved">✓ Solved</span>` : ""}</div>
+    <div class="q-meta">${levelPill(ch)}${t ? `<button class="chip-btn" data-topic="${t.id}">${t.icon} ${esc(t.label)}</button>` : ""}
+      <button class="chip-btn" data-open-tab="help">💡 Hints</button><span class="marks-tag">${marks}</span></div>`;
 }
 
 function renderLeft() {
@@ -449,11 +510,13 @@ function renderLeft() {
     html = `<div class="task"><p>A free space to experiment. Nothing here is marked and your code is saved automatically.</p>
       <p>Ideas: test a function before you submit it, explore <code>math</code>, <code>random</code>, <code>itertools</code> or <code>collections</code>, or debug with <code>print()</code>.</p></div>` + shortcutsHtml();
   } else if (leftTab === "task") {
-    html = `<div class="task">${ch.description}</div>` + shortcutsHtml();
-  } else if (leftTab === "tests") {
-    html = examplesHtml(ch);
+    html = questionHead(ch) + `<div class="task">${ch.description}</div>` + examplesHtml(ch) + shortcutsHtml();
+  } else if (leftTab === "help") {
+    html = hintsHtml(ch);
+  } else if (leftTab === "solution") {
+    html = solutionHtml(ch);
   } else {
-    html = helpHtml(ch);
+    html = subsHtml(ch);
   }
   $("#left-body").innerHTML = html;
 }
@@ -469,7 +532,7 @@ function shortcutsHtml() {
 function examplesHtml(ch) {
   const vis = ch.tests.filter((t) => !t.hidden);
   const hidden = ch.tests.length - vis.length;
-  let html = `<p class="help-intro">These are the visible tests your code is marked against.</p>`;
+  let html = `<div class="section-label">Examples</div>`;
   vis.forEach((t, i) => {
     html += `<div class="example"><div class="example-head"><span>Example ${i + 1}</span></div><div class="example-grid">`;
     if (ch.type === "stdout") {
@@ -489,28 +552,52 @@ function examplesHtml(ch) {
   return html;
 }
 
-function helpHtml(ch) {
+function hintsHtml(ch) {
   const p = prog(ch.id);
-  const canSolution = p.revealed || p.solved || p.fails >= SOLUTION_AFTER_FAILS || p.hints >= ch.hints.length;
   const cost = p.solved || p.revealed ? "" : `<span class="cost">−20% marks</span>`;
-  let html = `<p class="help-intro">Work through the hints one at a time — each nudges you a bit further.</p>`;
+  let html = `<p class="help-intro">Stuck? Reveal the hints one at a time. Each one nudges you a bit further.</p>`;
   for (let i = 0; i < ch.hints.length; i++) {
     if (i < p.hints) html += `<div class="hint-card"><span class="hint-num">${i + 1}</span><div>${ch.hints[i]}</div></div>`;
     else if (i === p.hints) html += `<div class="hint-locked"><span class="hint-num">${i + 1}</span><span>Hint ${i + 1} ${cost}</span><button class="btn" id="btn-hint">💡 Reveal</button></div>`;
     else html += `<div class="hint-locked"><span class="hint-num">${i + 1}</span><span>Locked</span></div>`;
   }
-  if (lastError) html += `<div class="explain"><b>About your last error — <code>${esc(lastError.type)}</code></b><br>${explainErr(lastError.type)}</div>`;
-  html += `<div class="solution-card"><h4>🔓 Model solution</h4>`;
+  if (lastError) html += `<div class="explain"><b>About your last error: <code>${esc(lastError.type)}</code></b><br>${explainErr(lastError.type)}</div>`;
+  return html;
+}
+
+function solutionHtml(ch) {
+  const p = prog(ch.id);
+  const canSolution = p.revealed || p.solved || p.fails >= SOLUTION_AFTER_FAILS || p.hints >= ch.hints.length;
+  let html = `<div class="solution-card"><h4>🔓 Model solution</h4>`;
   if (p.solutionOpen) {
     html += `<pre><code>${esc(ch.solution)}</code></pre><div class="actions"><button class="btn" id="btn-load-solution">Load into editor</button>
-      <button class="btn ghost" id="btn-solution">Hide</button></div><p class="muted small">Tip: type it out yourself rather than pasting — you'll remember it far better.</p>`;
+      <button class="btn ghost" id="btn-solution">Hide</button></div><p class="muted small">Tip: type it out yourself rather than pasting. You'll remember it far better.</p>`;
   } else if (canSolution) {
     html += `<p class="muted small">${p.solved || p.revealed ? "Compare your answer with ours." : "Viewing it before you've solved it means this challenge scores 0 marks."}</p>
       <button class="btn ${p.solved ? "" : "danger"}" id="btn-solution">Show solution</button>`;
   } else {
-    html += `<p class="muted small">Unlocks after ${SOLUTION_AFTER_FAILS} failed submissions (${p.fails}/${SOLUTION_AFTER_FAILS}) or once you've used every hint.</p>`;
+    html += `<p class="muted small">🔒 Unlocks after ${SOLUTION_AFTER_FAILS} failed submissions (${p.fails}/${SOLUTION_AFTER_FAILS}) or once you've used every hint (${p.hints}/${ch.hints.length}).</p>`;
   }
   return html + `</div>`;
+}
+
+const SUB_LABEL = { ok: ["Accepted", "pass"], wrong: ["Wrong Answer", "fail"], error: ["Runtime Error", "fail"], timeout: ["Time Limit Exceeded", "fail"] };
+function ago(t) {
+  const s = Math.round((Date.now() - t) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} hr ago`;
+  return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+function subsHtml(ch) {
+  const subs = prog(ch.id).subs || [];
+  if (!subs.length) return placeholder("🕑", "No submissions yet", "Every time you press Submit, the result and your code are saved here.");
+  return `<div class="subs">${subs.slice().reverse().map((x, j) => {
+    const i = subs.length - 1 - j, [label, cls] = SUB_LABEL[x.kind] || SUB_LABEL.wrong;
+    return `<details class="sub-row"><summary><span class="sub-status ${cls}">${label}</span>
+      <span class="sub-tests">${x.total ? `${x.passed}/${x.total} tests` : ""}</span><span class="sub-time">${ago(x.t)}</span></summary>
+      ${x.code ? `<pre><code>${esc(x.code)}</code></pre><button class="btn" data-load-sub="${i}">Load this code into the editor</button>` : `<p class="muted small" style="margin:0 12px 12px">Same code as the next submission.</p>`}</details>`;
+  }).join("")}</div>`;
 }
 
 const placeholder = (icon, title, sub) => `<div class="placeholder"><span class="big">${icon}</span><div><h3>${title}</h3><p>${sub}</p></div></div>`;
@@ -550,9 +637,9 @@ function renderGrade(data, ch, earned, firstSolve) {
   if (all) {
     const next = CH[CH.indexOf(ch) + 1];
     if (next) actions.push(`<button class="btn primary" data-goto="${next.id}">Next: ${esc(next.title)} →</button>`);
-    actions.push(`<button class="btn" data-open-help>Compare with model solution</button>`);
+    actions.push(`<button class="btn" data-open-tab="solution">Compare with model solution</button>`);
   } else if (prog(ch.id).hints < ch.hints.length) {
-    actions.push(`<button class="btn" data-open-help>💡 Get a hint</button>`);
+    actions.push(`<button class="btn" data-open-tab="help">💡 Get a hint</button>`);
   }
   if (actions.length) html += `<div class="verdict-actions">${actions.join("")}</div>`;
   html += `<div class="test-dots">${res.map((r) => `<span class="${r.passed ? "ok" : ""}"></span>`).join("")}</div>`;
@@ -581,6 +668,23 @@ function renderGrade(data, ch, earned, firstSolve) {
   lastError = firstErr;
   if (firstErr) markErrorLine(firstErr.line);
   renderLeft();
+}
+
+let caseIdx = 0;
+function renderCases() {
+  const ch = current();
+  const vis = isPlay(ch) ? [] : ch.tests.filter((t) => !t.hidden);
+  caseIdx = Math.min(caseIdx, Math.max(0, vis.length - 1));
+  const hidden = isPlay(ch) ? 0 : ch.tests.length - vis.length;
+  $("#case-pills").innerHTML = vis.map((_, i) => `<button class="case-pill ${i === caseIdx ? "on" : ""}" data-case="${i}">Case ${i + 1}</button>`).join("")
+    + (hidden ? `<span class="muted small">+ ${hidden} hidden</span>` : "");
+  const t = vis[caseIdx];
+  let d = "";
+  if (t && ch.type === "function") d = `<span class="k">call</span><pre>${esc(`${ch.func}(${t.args.map(pyRepr).join(", ")})`)}</pre><span class="k">expected</span><pre>${esc(pyRepr(t.expected))}</pre>`;
+  else if (t && ch.type === "script") d = `<span class="k">code</span><pre>${esc(t.code)}</pre><span class="k">expected</span><pre>${esc(pyRepr(t.expected))}</pre>`;
+  else if (t) d = `<span class="k">expected output</span><pre>${esc(t.expected)}</pre>`;
+  $("#case-detail").innerHTML = d;
+  $("#stdin-wrap").hidden = !(isPlay(ch) || ch.type === "stdout");
 }
 
 function showConsole(tab) {
@@ -649,6 +753,10 @@ function setBusy(b, what) {
 }
 
 function selectChallenge(id) {
+  if (saveTimer && byId[state.current]) { // don't lose the last 300ms of typing on the old challenge
+    clearTimeout(saveTimer); saveTimer = null;
+    prog(current().id).code = editor.getValue();
+  }
   state.current = id;
   save();
   const ch = current();
@@ -662,7 +770,9 @@ function selectChallenge(id) {
   if (ch.type === "stdout") $("#stdin").value = (ch.tests.find((t) => !t.hidden)?.input || []).join("\n");
   else if (!isPlay(ch)) $("#stdin").value = "";
   leftTab = "task";
-  showConsole("results");
+  caseIdx = 0;
+  renderCases();
+  showConsole("input");
   $("#console-results").innerHTML = isPlay(ch)
     ? placeholder("✦", "Playground", "Press ▶ Run to see your output here.")
     : p.solved
@@ -670,12 +780,12 @@ function selectChallenge(id) {
       : placeholder("📝", "Write your code, then submit it for marking", "Use ▶ Run to try things out first. Submit runs every test, including hidden ones.");
   renderAll();
   if (vscode.on) vscode.link(); // keeps VS Code on the same lesson; newest copy wins
-  document.querySelector(".ch-item.active")?.scrollIntoView({ block: "nearest" });
-  editor.focus();
+  if (view === "problem" && !isTouch) editor.focus();
 }
+const openProblem = (id) => { location.hash = `#/problem/${id}`; };
 const go = (delta) => {
   const i = ALL.indexOf(current()) + delta;
-  if (ALL[i]) selectChallenge(ALL[i].id);
+  if (ALL[i]) openProblem(ALL[i].id);
 };
 
 async function runCode() {
@@ -707,6 +817,14 @@ async function submitCode() {
   const allPass = !data.timeout && !data.load_error && !data.internal_error && data.results?.length && data.results.every((r) => r.passed);
   let earned = 0, firstSolve = false;
   p.submits = (p.submits || 0) + 1;
+  const code = editor.getValue();
+  const lastSub = (p.subs || []).at(-1);
+  p.subs = (p.subs || []).concat({
+    t: Date.now(), code: code.length > 8000 ? code.slice(0, 8000) + "\n# … (trimmed)" : code,
+    kind: allPass ? "ok" : data.timeout ? "timeout" : data.load_error || data.internal_error ? "error" : data.results?.some((r) => r.error) ? "error" : "wrong",
+    passed: data.results ? data.results.filter((r) => r.passed).length : 0, total: data.results ? data.results.length : 0,
+  }).slice(-20);
+  if (lastSub && lastSub.code === code) p.subs.at(-2).code = ""; // identical resubmit: keep one copy of the code
   if (allPass) {
     earned = pointsAvailable(ch);
     firstSolve = !p.solved;
@@ -719,6 +837,7 @@ async function submitCode() {
   save();
   renderGrade(data, ch, earned, firstSolve);
   renderHeader(); renderSidebar(); renderTitle();
+  if (allPass) renderLeft();
   if (allPass && firstSolve) {
     confetti();
     const lvlItems = CH.filter((c) => c.level === ch.level);
@@ -756,7 +875,7 @@ $("#sidebar").addEventListener("click", (e) => {
   const t = e.target.closest("[data-toggle]");
   if (t) { state.collapsed[t.dataset.toggle] = !state.collapsed[t.dataset.toggle]; save(); renderSidebar(); return; }
   const b = e.target.closest(".ch-item");
-  if (b) { selectChallenge(b.dataset.id); closeDrawer(); }
+  if (b) { closeDrawer(); openProblem(b.dataset.id); }
 });
 
 // ── phone layout: challenge drawer + coding key bar ──
@@ -780,7 +899,6 @@ function closeDrawer() {
   if (!document.body.classList.contains("drawer-open")) return;
   document.body.classList.remove("drawer-open"); $("#drawer-backdrop").hidden = true;
   $("#btn-menu").setAttribute("aria-expanded", "false");
-  window.scrollTo({ top: 0 });
 }
 $("#btn-menu").addEventListener("click", () => document.body.classList.contains("drawer-open") ? closeDrawer() : openDrawer());
 $("#drawer-backdrop").addEventListener("click", closeDrawer);
@@ -807,17 +925,35 @@ $("#left-tabs").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
   leftTab = b.dataset.tab; renderLeft();
 });
+$("#case-pills").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-case]"); if (!b) return;
+  caseIdx = +b.dataset.case;
+  const ch = current(), t = ch.tests.filter((x) => !x.hidden)[caseIdx];
+  if (ch.type === "stdout" && t) $("#stdin").value = t.input.join("\n");
+  renderCases();
+});
 $("#console-tabs").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (b) showConsole(b.dataset.ctab);
 });
 $("#console-results").addEventListener("click", (e) => {
   const g = e.target.closest("[data-goto]");
-  if (g) return selectChallenge(g.dataset.goto);
-  if (e.target.closest("[data-open-help]")) { leftTab = "help"; renderLeft(); }
+  if (g) return openProblem(g.dataset.goto);
+  const o = e.target.closest("[data-open-tab]");
+  if (o) { leftTab = o.dataset.openTab; renderLeft(); }
 });
 $("#left-body").addEventListener("click", (e) => {
   const ch = current();
   const p = prog(ch.id);
+  const tp = e.target.closest("[data-topic]");
+  if (tp) return openTopic(tp.dataset.topic);
+  const ot = e.target.closest("[data-open-tab]");
+  if (ot) { leftTab = ot.dataset.openTab; return renderLeft(); }
+  const ls = e.target.closest("[data-load-sub]");
+  if (ls) {
+    const sub = (p.subs || [])[+ls.dataset.loadSub];
+    if (sub && confirm("Replace the code in the editor with this submission?")) editor.setValue(sub.code);
+    return;
+  }
   if (e.target.closest("#btn-hint")) {
     if (p.hints < ch.hints.length) p.hints++;
     save(); renderLeft(); renderTitle();
@@ -832,7 +968,7 @@ $("#left-body").addEventListener("click", (e) => {
     editor.setValue(ch.solution);
   } else if (e.target.closest("[data-fill-input]")) {
     $("#stdin").value = ch.tests.filter((t) => !t.hidden)[0].input.join("\n");
-    showConsole("input");
+    caseIdx = 0; renderCases(); showConsole("input");
   }
 });
 $("#modal").addEventListener("click", (e) => {
@@ -861,9 +997,249 @@ $("#import-file").addEventListener("change", async (e) => {
 document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
   if (e.key === "Escape" && !$("#modal").hidden) return closeModal();
+  if (e.key === "Escape") closeTopic();
+  if (view !== "problem") return;
   if (mod && e.key === "Enter") { e.preventDefault(); return e.shiftKey ? submitCode() : runCode(); }
   if (e.altKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) { e.preventDefault(); go(e.key === "ArrowRight" ? 1 : -1); }
 });
+
+
+// ═════════════════════════ views & routing ═════════════════════════
+// #/ → roadmap   #/problems → problem list   #/problem/<id> → workspace
+const VIEWS = { roadmap: "#view-roadmap", problems: "#view-problems", problem: "#view-problem" };
+function showView(v) {
+  const changed = view !== v;
+  view = v;
+  document.body.dataset.view = v;
+  for (const [k, sel] of Object.entries(VIEWS)) $(sel).hidden = k !== v;
+  $$(".main-nav a").forEach((a) => a.classList.toggle("on", a.dataset.nav === v));
+  closeDrawer();
+  if (v !== "roadmap") closeTopic();
+  if (v === "roadmap") { renderRoadmap(); document.title = "Roadmap · PyMarker"; }
+  if (v === "problems") { renderProblems(); document.title = "Problems · PyMarker"; }
+  if (v === "problem") { editor.refresh(); renderTitle(); }
+  if (changed) window.scrollTo(0, 0);
+}
+function route() {
+  const h = location.hash;
+  const m = h.match(/^#\/problem\/([\w-]+)/);
+  if (m && byId[m[1]]) {
+    if (m[1] !== state.current) selectChallenge(m[1]);
+    showView("problem");
+    if (!isTouch) editor.focus();
+  } else if (h.startsWith("#/problems")) {
+    showView("problems");
+  } else {
+    showView("roadmap");
+    if (pendingTopic) { openTopic(pendingTopic); pendingTopic = null; }
+  }
+}
+let pendingTopic = null;
+window.addEventListener("hashchange", route);
+
+// ── roadmap ──
+const solvedIn = (items) => items.filter((c) => prog(c.id).solved).length;
+function renderRoadmap() {
+  const rows = [];
+  for (const t of TOPICS) (rows[t.row] ||= []).push(t);
+  const nextUp = TOPICS.find((t) => solvedIn(topicItems(t)) < t.ids.length);
+  $("#rm-graph").innerHTML = rows.map((row) => `<div class="rm-row">${row.map((t) => {
+    const items = topicItems(t), done = solvedIn(items), pct = (done / items.length) * 100;
+    const cls = done === items.length ? "done" : t === nextUp ? "next" : done ? "started" : "";
+    return `<button class="rm-node ${cls}" data-topic="${t.id}" id="node-${t.id}" title="${esc(t.blurb)}">
+      <span class="rm-top"><span class="rm-ico">${t.icon}</span><span class="rm-label">${esc(t.label)}</span></span>
+      <span class="rm-foot"><span class="rm-bar"><i style="width:${pct}%"></i></span><span class="rm-count">${done}/${items.length}</span></span>
+      ${t === nextUp ? `<span class="rm-badge">Up next</span>` : ""}</button>`;
+  }).join("")}</div>`).join("");
+  requestAnimationFrame(drawEdges);
+  renderStats();
+  renderCalendar();
+}
+function drawEdges() {
+  const wrap = $(".rm-graph-wrap"), svg = $("#rm-edges");
+  if (!wrap || view !== "roadmap") return;
+  const box = wrap.getBoundingClientRect();
+  svg.setAttribute("width", box.width); svg.setAttribute("height", box.height);
+  svg.setAttribute("viewBox", `0 0 ${box.width} ${box.height}`);
+  let paths = "";
+  for (const t of TOPICS) for (const from of t.after) {
+    const a = $(`#node-${from}`)?.getBoundingClientRect(), b = $(`#node-${t.id}`)?.getBoundingClientRect();
+    if (!a || !b) continue;
+    const x1 = a.left + a.width / 2 - box.left, y1 = a.bottom - box.top;
+    const x2 = b.left + b.width / 2 - box.left, y2 = b.top - box.top;
+    const my = (y1 + y2) / 2;
+    const done = solvedIn(topicItems(topicById[from])) === topicById[from].ids.length;
+    paths += `<path class="${done ? "lit" : ""}" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}"/>`;
+  }
+  svg.innerHTML = paths;
+}
+new ResizeObserver(() => drawEdges()).observe(document.querySelector(".rm-graph-wrap"));
+
+function ringSvg(size = 132) {
+  // One ring, split into a segment per level (sized by how many challenges it has); each fills as you solve.
+  const r = 52, C = 2 * Math.PI * r, gap = 6;
+  let start = 0, arcs = "";
+  for (const [lvl] of Object.entries(LEVELS)) {
+    const items = CH.filter((c) => c.level === lvl);
+    const seg = (C * items.length) / CH.length - gap;
+    const fill = (seg * solvedIn(items)) / items.length;
+    arcs += `<circle cx="60" cy="60" r="${r}" class="ring-track" stroke-dasharray="${seg} ${C}" stroke-dashoffset="${-start}"/>`;
+    if (fill > 0) arcs += `<circle cx="60" cy="60" r="${r}" stroke="var(--${lvl})" stroke-dasharray="${fill} ${C}" stroke-dashoffset="${-start}"/>`;
+    start += seg + gap;
+  }
+  return `<svg viewBox="0 0 120 120" width="${size}" height="${size}" class="ring3">${arcs}</svg>`;
+}
+function renderStats() {
+  const t = totals(), cur = current();
+  const lv = Object.entries(LEVELS).map(([lvl, meta]) => {
+    const items = CH.filter((c) => c.level === lvl);
+    return `<div class="lv-row"><span class="lv-name" style="color:var(--${lvl})">${meta.label}</span><span class="lv-num">${solvedIn(items)}<span class="muted">/${items.length}</span></span></div>`;
+  }).join("");
+  const resume = isPlay(cur) || prog(cur.id).solved ? CH.find((c) => !prog(c.id).solved) : cur;
+  $("#rm-stats").innerHTML = `
+    <div class="st-top"><div class="lv-list">${lv}</div>
+      <div class="ring-wrap">${ringSvg()}<div class="ring-center"><b>${t.solved}</b><span>/${CH.length}</span><small>Solved</small></div></div></div>
+    <button class="grade-line" id="rm-grade"><span class="grade-letter sm">${t.grade}</span><span><b>${t.points}</b>/${MAX_POINTS} marks · ${t.pct}%</span><span class="muted">Report ›</span></button>
+    ${resume ? `<a class="btn primary wide" href="#/problem/${resume.id}">${prog(resume.id).code ? "Continue" : "Start"}: ${esc(resume.title)} →</a>` : `<div class="all-done">🏆 Every challenge solved!</div>`}`;
+}
+
+let calOffset = 0; // months back from this month
+function bestStreak() {
+  const days = [...new Set(state.days)].sort();
+  let best = 0, run = 0, prev = null;
+  for (const d of days) {
+    const cur = new Date(d + "T12:00:00");
+    run = prev && (cur - prev) / 864e5 === 1 ? run + 1 : 1;
+    best = Math.max(best, run); prev = cur;
+  }
+  return best;
+}
+function renderCalendar() {
+  const now = new Date(), first = new Date(now.getFullYear(), now.getMonth() - calOffset, 1);
+  const daysIn = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const lead = (first.getDay() + 6) % 7; // Monday-first
+  const solved = new Set(state.days), todayStr = today();
+  let cells = "";
+  for (let i = 0; i < lead; i++) cells += `<span></span>`;
+  for (let d = 1; d <= daysIn; d++) {
+    const ds = new Date(first.getFullYear(), first.getMonth(), d).toLocaleDateString("en-CA");
+    cells += `<span class="day ${solved.has(ds) ? "hit" : ""} ${ds === todayStr ? "today" : ""}" title="${solved.has(ds) ? "Solved something" : ""}">${d}</span>`;
+  }
+  $("#rm-cal").innerHTML = `
+    <div class="cal-head"><button class="btn icon ghost" data-cal="1" aria-label="Previous month">‹</button>
+      <b>${first.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</b>
+      <button class="btn icon ghost" data-cal="-1" aria-label="Next month" ${calOffset === 0 ? "disabled" : ""}>›</button></div>
+    <div class="cal-grid">${["M", "T", "W", "T", "F", "S", "S"].map((x) => `<span class="dow">${x}</span>`).join("")}${cells}</div>
+    <div class="streaks"><div><span class="muted small">Current streak</span><b>🔥 ${streak()} day${streak() === 1 ? "" : "s"}</b></div>
+      <div><span class="muted small">Best streak</span><b>🏆 ${bestStreak()} day${bestStreak() === 1 ? "" : "s"}</b></div></div>
+    <p class="muted small cal-tip">Solve one problem a day to keep your streak going.</p>`;
+}
+$("#view-roadmap").addEventListener("click", (e) => {
+  const n = e.target.closest("[data-topic]"); if (n) return openTopic(n.dataset.topic);
+  const c = e.target.closest("[data-cal]"); if (c) { calOffset = Math.max(0, calOffset + +c.dataset.cal); return renderCalendar(); }
+  if (e.target.closest("#rm-grade")) openDashboard();
+});
+
+// ── topic drawer ──
+function statusIcon(c) {
+  const p = prog(c.id);
+  if (p.solved) return `<span class="st-ico done" title="Solved">✓</span>`;
+  if (p.fails > 0 || (p.code && p.code !== c.starter)) return `<span class="st-ico tried" title="In progress"></span>`;
+  return `<span class="st-ico" title="Not started"></span>`;
+}
+function problemRows(items) {
+  return items.map((c) => {
+    const p = prog(c.id), max = LEVELS[c.level].points;
+    return `<tr data-open="${c.id}" tabindex="0"><td class="c-st">${statusIcon(c)}</td>
+      <td class="c-title"><a href="#/problem/${c.id}">${esc(c.title)}</a></td>
+      <td class="c-lvl">${levelPill(c)}</td>
+      <td class="c-marks">${p.solved ? `<b>${p.points}</b>/${max}` : `<span class="muted">${max}</span>`}</td></tr>`;
+  }).join("");
+}
+const tableHead = `<thead><tr><th class="c-st">Status</th><th>Problem</th><th class="c-lvl">Level</th><th class="c-marks">Marks</th></tr></thead>`;
+function openTopic(id) {
+  const t = topicById[id]; if (!t) return;
+  const items = topicItems(t), done = solvedIn(items);
+  $("#td-title").innerHTML = `${t.icon} ${esc(t.label)} <span class="muted">(${done} / ${items.length})</span>`;
+  $("#td-sub").textContent = t.blurb;
+  const pre = t.after.map((a) => `<button class="chip-btn" data-topic="${a}">${topicById[a].icon} ${esc(topicById[a].label)}</button>`).join("");
+  $("#td-body").innerHTML = `
+    <div class="td-bar"><i style="width:${(done / items.length) * 100}%"></i></div>
+    <div class="section-label">Key ideas</div><div class="concepts">${t.concepts.map((c) => `<span>${esc(c)}</span>`).join("")}</div>
+    ${pre ? `<div class="section-label">Builds on</div><div class="concepts">${pre}</div>` : ""}
+    <div class="section-label">Problems</div>
+    <table class="ptable">${tableHead}<tbody>${problemRows(items)}</tbody></table>`;
+  $("#topic-drawer").hidden = false; $("#topic-backdrop").hidden = false;
+  requestAnimationFrame(() => document.body.classList.add("topic-open"));
+}
+function closeTopic() {
+  if ($("#topic-drawer").hidden) return;
+  document.body.classList.remove("topic-open");
+  $("#topic-drawer").hidden = true; $("#topic-backdrop").hidden = true;
+}
+$("#td-close").onclick = closeTopic;
+$("#topic-backdrop").onclick = closeTopic;
+$("#topic-drawer").addEventListener("click", (e) => {
+  const tp = e.target.closest("[data-topic]"); if (tp) return openTopic(tp.dataset.topic);
+  const row = e.target.closest("[data-open]");
+  if (row) { e.preventDefault(); closeTopic(); openProblem(row.dataset.open); }
+});
+
+// ── problem list ──
+const pl = { q: "", topic: "all", level: "all", status: "all" };
+$("#pl-topic").innerHTML = `<option value="all">All topics</option>` + TOPICS.map((t) => `<option value="${t.id}">${t.icon} ${esc(t.label)}</option>`).join("");
+function renderProblems() {
+  const t = totals();
+  $("#pl-summary").textContent = `${t.solved} of ${CH.length} solved · ${t.points}/${MAX_POINTS} marks · grade ${t.grade}`;
+  $$("#pl-level button").forEach((b) => b.classList.toggle("on", b.dataset.level === pl.level));
+  $$("#pl-status button").forEach((b) => b.classList.toggle("on", b.dataset.status === pl.status));
+  $("#pl-topic").value = pl.topic;
+  const q = pl.q.trim().toLowerCase();
+  let html = "", shown = 0;
+  for (const tp of TOPICS) {
+    if (pl.topic !== "all" && pl.topic !== tp.id) continue;
+    const all = topicItems(tp);
+    const items = all.filter((c) => {
+      const p = prog(c.id);
+      if (pl.level !== "all" && c.level !== pl.level) return false;
+      if (pl.status === "todo" && p.solved) return false;
+      if (pl.status === "done" && !p.solved) return false;
+      return !q || c.title.toLowerCase().includes(q) || (c.func || "").toLowerCase().includes(q);
+    });
+    if (!items.length) continue;
+    shown += items.length;
+    const done = solvedIn(all);
+    html += `<section class="pl-group"><header><button class="pl-topic" data-topic="${tp.id}">${tp.icon} ${esc(tp.label)}</button>
+      <span class="pl-count">${done}/${all.length}</span><span class="td-bar sm"><i style="width:${(done / all.length) * 100}%"></i></span></header>
+      <table class="ptable">${tableHead}<tbody>${problemRows(items)}</tbody></table></section>`;
+  }
+  $("#pl-body").innerHTML = shown ? html : `<div class="empty-list">No problems match those filters.</div>`;
+}
+$("#pl-search").addEventListener("input", (e) => { pl.q = e.target.value; renderProblems(); });
+$("#pl-topic").addEventListener("change", (e) => { pl.topic = e.target.value; renderProblems(); });
+$("#pl-level").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { pl.level = b.dataset.level; renderProblems(); } });
+$("#pl-status").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { pl.status = b.dataset.status; renderProblems(); } });
+$("#pl-body").addEventListener("click", (e) => {
+  const tp = e.target.closest("[data-topic]");
+  if (tp) { pendingTopic = tp.dataset.topic; if (location.hash === "#/") route(); else location.hash = "#/"; return; }
+  const row = e.target.closest("[data-open]");
+  if (row) { e.preventDefault(); openProblem(row.dataset.open); }
+});
+for (const sel of ["#pl-body", "#topic-drawer"]) $(sel).addEventListener("keydown", (e) => {
+  const row = e.target.closest("[data-open]");
+  if (row && e.key === "Enter") { closeTopic(); openProblem(row.dataset.open); }
+});
+
+// ── theme ──
+const THEME_KEY = "pymarker.theme";
+let theme = store.get(THEME_KEY) === "light" ? "light" : "dark";
+function applyTheme(t) {
+  theme = t;
+  document.documentElement.dataset.theme = t;
+  editor.setOption("theme", t === "light" ? "default" : "material-darker");
+  document.querySelector('meta[name="theme-color"]').content = t === "light" ? "#f6f7fb" : "#0a0d13";
+}
+$("#btn-theme").onclick = () => { applyTheme(theme === "light" ? "dark" : "light"); store.set(THEME_KEY, theme); if (view === "roadmap") drawEdges(); };
 
 // ═════════════════════════ learners ═════════════════════════
 // Several people can share one browser; each learner's progress lives under its own key.
@@ -945,5 +1321,11 @@ $("#btn-prev").title = `Previous (${ALT} ←)`;
 $("#btn-next").title = `Next (${ALT} →)`;
 renderLearnerButton();
 applyFont();
+applyTheme(theme);
+{
+  const deep = location.hash.match(/^#\/problem\/([\w-]+)/);
+  if (deep && byId[deep[1]]) state.current = deep[1];
+}
 selectChallenge(current().id);
+route();
 vscode.init();

@@ -2,6 +2,16 @@
 
 Python challenges from beginner to advanced, marked automatically in the browser.
 
+Laid out like a coding-practice site:
+- **Roadmap** (`#/`): a graph of 8 topics (Basics → if/elif/else → Loops → Strings / Lists & Dicts → Recursion →
+  Algorithms / Classes), each with a progress bar. Click a topic for its problems. Beside it: a solved-by-level ring,
+  your grade, a *Continue* button, and a streak calendar.
+- **Problems** (`#/problems`): every problem in a table grouped by topic, filterable by topic, level, status and search.
+- **Problem** (`#/problem/<id>`): Question / Hints / Solution / Submissions tabs, the editor, and a console with
+  *Testcases* (Case 1, Case 2…) and *Result*, plus Run and Submit. Light/dark theme toggle in the top bar.
+
+Topics live in `TOPICS` in `app.js`. A new challenge must be added to one topic's `ids`, or the console warns.
+
 - **53 challenges** — 22 Beginner (10 marks), 18 Intermediate (20), 13 Advanced (35), including a
   23-challenge **if / elif / else** pack (sidebar filter: *if/else*)
 - **Submit** runs every test (including hidden ones) and tells you Correct / Incorrect, with expected vs. got
