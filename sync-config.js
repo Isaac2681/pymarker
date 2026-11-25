@@ -2,6 +2,6 @@
 // the database's row-level security rules allow (each signed-in person can read/write only their own row).
 // Leave them empty to turn sync off.
 globalThis.PYMARKER_SYNC = {
-  url: "",      // e.g. "https://abcdefghijklmno.supabase.co"
-  anonKey: "",  // Project Settings → API → "anon public" key
+  url: "https://bfneqcbklxjdpofzjhuf.supabase.co",
+  anonKey: "sb_publishable_hTWj_IbTR_abVBhDiaO7iQ_ZyAEV3pF",  // publishable (public) key: Project Settings → API Keys
 };
